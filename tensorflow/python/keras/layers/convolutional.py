@@ -19,6 +19,9 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
+import os
+from tensorflow.python.ops import quantemu_ops
+
 from tensorflow.python.eager import context
 from tensorflow.python.framework import tensor_shape
 from tensorflow.python.keras import activations
@@ -183,7 +186,33 @@ class Conv(Layer):
     self.built = True
 
   def call(self, inputs):
-    outputs = self._convolution_op(inputs, self.kernel)
+    enable_quantop = (os.getenv('ENABLE_QUANTOP', False))
+    #print('quantop status' , enable_quantop, int(os.getenv('QUANTEMU_METHOD', 0)), int(os.getenv('QUANTEMU_EXPBITS', 5)))
+    if enable_quantop is True:
+#      print('quantop is enabled' , enable_quantop)
+      inputs_qs = quantemu_ops.quantize_emu(inputs,
+                        mbits=int(os.getenv('QUANTEMU_MBITS_INPUT', 23)),
+                        quantize_grad=(os.getenv('ENABLE_QUANTGRAD', False)),
+                        mbits_grad=int(os.getenv('QUANTEMU_MBITS_GRAD', 23)),
+                        lpdata_type=int(os.getenv('QUANTEMU_METHOD', 0)),
+                        exponent_bits=int(os.getenv('QUANTEMU_EXPBITS', 5)),
+                        block_type=int(os.getenv('QUANTEMU_INPUT_BLOCK_TYPE', 0)),
+                        block_size=int(os.getenv('QUANTEMU_INPUT_BLOCK_SIZE', 0)),
+                        round_mode=int(os.getenv('QUANTEMU_INPUT_RMODE', 0)) )
+      kernel_qs = quantemu_ops.quantize_emu(self.kernel,
+                        mbits=int(os.getenv('QUANTEMU_MBITS_KERNEL', 23)),
+                        quantize_grad=(os.getenv('ENABLE_QUANTGRAD', False)),
+                        mbits_grad=int(os.getenv('QUANTEMU_MBITS_GRAD', 23)),
+                        lpdata_type=int(os.getenv('QUANTEMU_METHOD', 0)),
+                        exponent_bits=int(os.getenv('QUANTEMU_EXPBITS', 5)),
+                        block_type=int(os.getenv('QUANTEMU_KERNEL_BLOCK_TYPE', 0)),
+                        block_size=int(os.getenv('QUANTEMU_KERNEL_BLOCK_SIZE', 0)),
+                        round_mode=int(os.getenv('QUANTEMU_KERNEL_RMODE', 0)) )
+      outputs = self._convolution_op(inputs_qs, kernel_qs)
+    else :
+      outputs = self._convolution_op(inputs, self.kernel)
+
+#    outputs = self._convolution_op(inputs, self.kernel)
 
     if self.use_bias:
       if self.data_format == 'channels_first':
