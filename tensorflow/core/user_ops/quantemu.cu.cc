@@ -1,11 +1,22 @@
 #ifdef GOOGLE_CUDA
 #define EIGEN_USE_GPU
 #include "quantemu.h"
-#include "tensorflow/core/util/cuda_kernel_helper.h"
+//#include "tensorflow/core/util/cuda_kernel_helper.h"
+#include "third_party/eigen3/unsupported/Eigen/CXX11/Tensor"
+
 
 using namespace tensorflow;
-
 using GPUDevice = Eigen::GpuDevice;
+
+
+#include "quantemu_cuda_utils.cu.cc" 
+#if 0
+template<int threads>
+extern __global__ void find_min_max_dynamic(const float* in, float* out, int n, int start_adr, int num_blocks);
+
+template<int els_per_block, int threads>
+extern __global__ void find_min_max(const float* in, float* out);
+#endif 
 
 // Define the CUDA kernel.
 template <typename T>
@@ -35,46 +46,53 @@ __global__ void QuantEmuCudaKernel(int mbits, T absmax, int rmode, const int siz
   }
 }
 
-
-
-// Define the GPU implementation that launches the CUDA kernel.
+/* Define the GPU implementation that launches the CUDA kernel. */
 template <typename T>
 struct QuantEmuFunctor<GPUDevice, T> { 
-  void operator()(const GPUDevice& d, int mbits, T absmax, int rmode, int size, const T* in, T* out) {
-  /* Launch the cuda kernel.
-     See core/util/cuda_kernel_helper.h for example of computing
-     block count and thread_per_block count.
-  */
-    std::cout << "Calling Cuda kernel " << std::endl;
-#if 10
-    int block_count = 1024;
-    int thread_per_block = 20;
+  void operator()(const GPUDevice& d, int mbits, int rmode, int size, const T* in, T* out) {
+    int thread_per_block = (32 < size)?32 :size;
+    int block_count = size/thread_per_block; 
+
+    find_min_max<32, 32><<<block_count, thread_per_block>>>(in, out);
+     
+    T absmax = 0;
     QuantEmuCudaKernel<T>
          <<<block_count, thread_per_block, 0, d.stream()>>>(mbits, absmax, rmode, size, in, out);
-#endif 
   }
 };
-
-/* Explicitly instantiate functors for the types of OpKernels registered.*/
 template struct QuantEmuFunctor<GPUDevice, float>;
-//template struct QuantEmuFunctor<GPUDevice, int32>;
 
 template <typename T>
-struct BlockQuantEmuFunctor<GPUDevice, T> {
-  void operator()(const GPUDevice& d, int mbits, int rmode, const Tensor in, Tensor out) {
+struct BlockC_QuantEmuFunctor<GPUDevice, T> {
+  void operator()(const GPUDevice& d, int mbits, int block_size, int rmode, const Tensor in, Tensor out) {
+//    std::cout << " Inside the BlockQuantEmuFunctorGPU version " << std::endl; 
   }
 };
-/* Explicitly instantiate functors for the types of OpKernels registered.*/
-template struct BlockQuantEmuFunctor<GPUDevice, float>;
-//template struct BlockQuantEmuFunctor<GPUDevice, int32>;
+template struct BlockC_QuantEmuFunctor<GPUDevice, float>;
+
+template <typename T>
+struct BlockCHW_QuantEmuFunctor<GPUDevice, T> {
+  void operator()(const GPUDevice& d, int mbits, int block_size, int rmode, const Tensor in, Tensor out) {
+//    std::cout << " Inside the BlockQuantEmuFunctorGPU version " << std::endl; 
+  }
+};
+template struct BlockCHW_QuantEmuFunctor<GPUDevice, float>;
 
 template <typename T>
 struct LowpFloatQuantEmuFunctor <GPUDevice, T> {
   void operator()(const GPUDevice& d, int mbits, int exp_bits, int rmode, int size, const T* in, T* out) {
+    std::cout << " Inside the LowpFloatQuantEmuFunctor GPU version "<< size  << std::endl; 
+//    int thread_per_block = (32 < size)? 32 : size;
+//    int block_count = size/thread_per_block; 
+
+    int num_blocks = size/32;
+    int tail = size - num_blocks*32;
+    int start_adr = size - tail;
+ 
+    find_min_max<32, 32><<< num_blocks, 32>>>(in, out);
+    find_min_max_dynamic<32><<< 1, 32>>>(in, out, size, start_adr, num_blocks);
   }
 };
 template struct LowpFloatQuantEmuFunctor<GPUDevice, float>;
-//template struct LowpFloatQuantEmuFunctor<GPUDevice, int32>;
 
 #endif  // GOOGLE_CUDA
-

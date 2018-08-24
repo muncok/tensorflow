@@ -27,6 +27,8 @@ from __future__ import print_function
 import collections
 import hashlib
 import numbers
+import os
+from tensorflow.python.ops import quantemu_ops
 
 from tensorflow.python.eager import context
 from tensorflow.python.framework import constant_op
@@ -635,13 +637,74 @@ class BasicLSTMCell(LayerRNNCell):
     else:
       c, h = array_ops.split(value=state, num_or_size_splits=2, axis=one)
 
-    gate_inputs = math_ops.matmul(
-        array_ops.concat([inputs, h], 1), self._kernel)
+    enable_quantop_lstm = int(os.getenv('ENABLE_QUANTOP_LSTM', 0))
+    if enable_quantop_lstm is 1:
+      inputs_qs = quantemu_ops.quantize_emu(inputs,
+			data_format='unknown', 
+                        output_data_type=int(os.getenv('QUANTEMU_OUTPUT_TYPE', 0)),
+                        output_precision=int(os.getenv('QUANTEMU_PRECISION_ACTS', 23)),
+                        output_exponent_bits=int(os.getenv('QUANTEMU_EXPBITS', 5)),
+                        channel_blocking_type=int(os.getenv('QUANTEMU_CBLOCK_TYPE_ACTS', 0)),
+                        input_channels_per_block=int(os.getenv('QUANTEMU_CBLOCK_SIZE_ACTS', 0)),
+                        round_mode=int(os.getenv('QUANTEMU_RMODE_ACTS', 0)), 
+                        quantize_gradients=int(os.getenv('ENABLE_QUANTGRAD_CONV', 0)),
+                        gradient_precision=int(os.getenv('QUANTEMU_PRECISION_GRAD', 23)) ) 
+
+      h_qs = quantemu_ops.quantize_emu(h,
+			data_format='unknown', 
+                        output_data_type=int(os.getenv('QUANTEMU_OUTPUT_TYPE', 0)),
+                        output_precision=int(os.getenv('QUANTEMU_PRECISION_ACTS', 23)),
+                        output_exponent_bits=int(os.getenv('QUANTEMU_EXPBITS', 5)),
+                        channel_blocking_type=int(os.getenv('QUANTEMU_CBLOCK_TYPE_ACTS', 0)),
+                        input_channels_per_block=int(os.getenv('QUANTEMU_CBLOCK_SIZE_ACTS', 0)),
+                        round_mode=int(os.getenv('QUANTEMU_RMODE_ACTS', 0)), 
+                        quantize_gradients=int(os.getenv('ENABLE_QUANTGRAD_CONV', 0)),
+                        gradient_precision=int(os.getenv('QUANTEMU_PRECISION_GRAD', 23)) ) 
+
+      kernel_qs = quantemu_ops.quantize_emu(self.kernel,
+			data_format='unknown', 
+                        output_data_type=int(os.getenv('QUANTEMU_OUTPUT_TYPE', 0)),
+                        output_precision=int(os.getenv('QUANTEMU_PRECISION_FILTER', 23)),
+                        output_exponent_bits=int(os.getenv('QUANTEMU_EXPBITS', 5)),
+                        channel_blocking_type=int(os.getenv('QUANTEMU_CBLOCK_TYPE_FILTER', 0)),
+                        input_channels_per_block=int(os.getenv('QUANTEMU_CBLOCK_SIZE_FILTER', 0)),
+                        round_mode=int(os.getenv('QUANTEMU_RMODE_FILTER', 0)), 
+                        quantize_gradients=int(os.getenv('ENABLE_QUANTGRAD_CONV', 0)),
+                        gradient_precision=int(os.getenv('QUANTEMU_PRECISION_GRAD', 23)) ) 
+
+      gate_inputs = math_ops.matmul(
+          array_ops.concat([inputs_qs, h_qs], 1), kernel_qs)
+    else :
+      gate_inputs = math_ops.matmul(
+          array_ops.concat([inputs, h], 1), self._kernel)
+
+#    gate_inputs = math_ops.matmul(
+#        array_ops.concat([inputs, h], 1), self._kernel)
+
     gate_inputs = nn_ops.bias_add(gate_inputs, self._bias)
 
-    # i = input_gate, j = new_input, f = forget_gate, o = output_gate
-    i, j, f, o = array_ops.split(
+    enable_quantop_lstm_gates = int(os.getenv('ENABLE_QUANTOP_LSTM_GATES', 0))
+    if enable_quantop_lstm_gates is 1:
+      gate_inputs_qs = quantemu_ops.quantize_emu(gate_inputs,
+			data_format='unknown', 
+                        output_data_type=int(os.getenv('QUANTEMU_OUTPUT_TYPE', 0)),
+                        output_precision=int(os.getenv('QUANTEMU_PRECISION_ACTS', 23)),
+                        output_exponent_bits=int(os.getenv('QUANTEMU_EXPBITS', 5)),
+                        channel_blocking_type=int(os.getenv('QUANTEMU_CBLOCK_TYPE_ACTS', 0)),
+                        input_channels_per_block=int(os.getenv('QUANTEMU_CBLOCK_SIZE_ACTS', 0)),
+                        round_mode=int(os.getenv('QUANTEMU_RMODE_ACTS', 0)), 
+                        quantize_gradients=int(os.getenv('ENABLE_QUANTGRAD_CONV', 0)),
+                        gradient_precision=int(os.getenv('QUANTEMU_PRECISION_GRAD', 23)) ) 
+
+      i, j, f, o = array_ops.split(
+        value=gate_inputs_qs, num_or_size_splits=4, axis=one)
+    else :
+      i, j, f, o = array_ops.split(
         value=gate_inputs, num_or_size_splits=4, axis=one)
+
+    # i = input_gate, j = new_input, f = forget_gate, o = output_gate
+    #i, j, f, o = array_ops.split(
+    #    value=gate_inputs, num_or_size_splits=4, axis=one)
 
     forget_bias_tensor = constant_op.constant(self._forget_bias, dtype=f.dtype)
     # Note that using `add` and `multiply` instead of `+` and `*` gives a

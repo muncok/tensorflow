@@ -6,38 +6,10 @@ using namespace tensorflow;
 
 enum ROUND_MODE{NOROUND=0, BIASED, NEAREST};
 enum FGQ_TYPE{NOBLOCK=0, BLOCK_C, BLOCK_CHW };
-enum LPDATA_TYPE{DFP_INT=0, DFP_UINT, TERNARY, BLK_FP, LOWP_FP};
+enum LPDATA_TYPE{DFP_INT=0, DFP_UINT, TERNARY, BLOCK_FP, LOWP_FP};
 
 using CPUDevice = Eigen::ThreadPoolDevice;
 using GPUDevice = Eigen::GpuDevice;
-
-template <typename Device, typename T>
-struct QuantEmuFunctor {
-  void operator()(const Device& d, int mbits, T absmax, int rmode, int size, const T* in, T* out);
-};
-
-template <typename Device, typename T>
-struct BlockQuantEmuFunctor {
-  void operator()(const Device& d, int mbits, int rmode, const Tensor in, Tensor out);
-};
-
-template <typename Device, typename T>
-struct LowpFloatQuantEmuFunctor {
-  void operator()(const Device& d, int mbits, int exp_bits, int rmode, int size, const T *in, T *out);
-};
-
-template <typename Device, typename T>
-struct BlockFloatQuantEmuFunctor {
-  void operator()(const Device& d, int mbits, int rmode, const Tensor in, Tensor out);
-};
-
-
-#if 0 //GOOGLE_CUDA
-template <typename GPUDevice, typename T>
-struct QuantEmuFunctor {
-  void operator()(const GPUDevice& d, int mbits, T absmax, int rmode, int size, const T* in, T* out);
-};
-#endif 
 
 typedef union ufloat32
 {
@@ -50,5 +22,58 @@ typedef union ufloat32
     uint Sign : 1;
   };
 }UFLOAT32;
+
+template <typename Device, typename T>
+struct QuantEmuFunctor {
+  void operator()(const Device& d, int mbits, int rmode, int size, const T* in, T* out);
+};
+
+template <typename Device, typename T>
+struct BlockC_QuantEmuFunctor {
+  void operator()(const Device& d, int mbits, int block_size, int rmode, const Tensor in, Tensor out);
+};
+
+template <typename Device, typename T>
+struct BlockCHW_QuantEmuFunctor {
+  void operator()(const Device& d, int mbits, int block_size, int rmode, const Tensor in, Tensor out);
+};
+
+template <typename Device, typename T>
+struct LowpFloatQuantEmuFunctor {
+  void operator()(const Device& d, int mbits, int exp_bits, int rmode, int size, const T *in, T *out);
+};
+
+template <typename Device, typename T>
+struct BlockFloatQuantEmuFunctor {
+  void operator()(const Device& d, int mbits, int rmode, const Tensor in, Tensor out);
+};
+
+#if GOOGLE_CUDA
+#if 0
+template <typename Eigen::GpuDevice, typename T>
+struct QuantEmuFunctor {
+  void operator()(const Eigen::GpuDevice& d, int mbits, int rmode, int size, const T* in, T* out);
+};
+
+template <typename Eigen::GpuDevice, typename T>
+struct LowpFloatQuantEmuFunctor {
+  void operator()(const Eigen::GpuDevice& d, int mbits, int exp_bits, int rmode, int size, const T *in, T *out);
+};
+
+template <typename Eigen::GpuDevice, typename T>
+struct BlockFloatQuantEmuFunctor {
+  void operator()(const Eigen::GpuDevice& d, int mbits, int rmode, const Tensor in, Tensor out);
+};
+
+template <typename T>
+void QuantEmuFunctor_GPU_launcher (const GPUDevice& d, int mbits, T absmax, int rmode, int size, const T* in, T* out); 
+template <typename T>
+void BlockQuantEmuFunctor_GPU_launcher (const GPUDevice& d, int mbits, int rmode, const Tensor in, Tensor out); 
+template <typename T>
+void LowpFloatQuantEmuFunctor_GPU_launcher (const GPUDevice& d, int mbits, int exp_bits, int rmode, int size, const T* in, T* out); 
+#endif 
+
+#endif 
+
 
 #endif //_KERNEL_H_

@@ -2,8 +2,9 @@ load("//tensorflow:tensorflow.bzl", "tf_custom_op_library")
 
 tf_custom_op_library(
     name = "quantemu.so",
-    srcs = ["quantemu.cc", "quantemu.h",],
+    srcs = ["quantemu.cc"],
     gpu_srcs = ["quantemu.cu.cc"],
+    linkopts = ["-fopenmp"],
 )
 
 py_library(
@@ -17,7 +18,6 @@ py_library(
 
 py_test(
     name = "quantemu_op_test",
-    size = "small",
     srcs = ["quantemu_op_test.py"],
     srcs_version = "PY2AND3",
     deps = [

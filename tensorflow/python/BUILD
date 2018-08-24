@@ -1703,8 +1703,6 @@ py_library(
     name = "quantemu_ops",
     srcs = ["ops/quantemu_ops.py"],
     srcs_version = "PY2AND3",
-#    data = ["//tensorflow/core/user_ops:quantemu.so"],
-#    deps = ["//tensorflow/core/user_ops:quantemu.so"],
 )
 
 py_library(
