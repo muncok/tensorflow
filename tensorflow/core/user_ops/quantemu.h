@@ -30,12 +30,12 @@ struct QuantEmuFunctor {
 
 template <typename Device, typename T>
 struct BlockC_QuantEmuFunctor {
-  void operator()(const Device& d, int mbits, int block_size, int rmode, const Tensor in, Tensor out);
+  void operator()(const Device& d, int mbits, int *dims, int block_size, int rmode, const T* in, T* out);
 };
 
 template <typename Device, typename T>
 struct BlockCHW_QuantEmuFunctor {
-  void operator()(const Device& d, int mbits, int block_size, int rmode, const Tensor in, Tensor out);
+  void operator()(const Device& d, int mbits, int *dims, int block_size, int rmode, const T *in, T *out);
 };
 
 template <typename Device, typename T>

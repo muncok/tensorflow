@@ -48,6 +48,7 @@ template <typename T>
 struct QuantEmuFunctor<CPUDevice, T> {
   void operator()(const CPUDevice& d, int mbits, int rmode, int size, const T* in, T* out) {
 
+//    std::cout << " *** Inside the QuantEmuFunctor CPU version "<< size  << std::endl; 
     T absmax = 0.0; 
     #pragma omp parallel for reduction(max: absmax)
     for (int i=0; i < size; i++) if (fabs(in[i]) > absmax) absmax = fabs(in[i]);  
@@ -132,21 +133,13 @@ struct QuantEmuFunctor<CPUDevice, T> {
 /* CPU specialization of actual computation. */
 template <typename T>
 struct BlockC_QuantEmuFunctor<CPUDevice, T> {
-  void operator()(const CPUDevice& d, int mbits, int block_size, int rmode, Tensor in, Tensor out) {
-    //assert((in.dims() <= 4) && "quantemu_op does not support tensors with more than 4 dimentions" );  
-    if ( in.dims() > 4 ) { std::cout << "quantemu_op does not support tensors with more than 4 dimentions" << std::endl; exit (0); }
+  void operator()(const CPUDevice& d, int mbits, int *dims, int block_size, int rmode, const T *in, T *out) {
 
-    int dims[4] = { 1, 1, 1, 1}; 
-    for (int d=0; d < in.dims(); d++ ) dims[d] = in.dim_size(d); 
-    // std::cout << "dim3: " << dims[3] << ", dims2 : " << dims[2] <<", dims1 : " << dims[1] << ", dims0 : " << dims[0] << std::endl;
-//    std::cout << " Multiple dimentions : " << in.dims() << ", " << in.dim_size(0) << ", " << in.dim_size(1) << ", " << in.dim_size(2) << ", " <<in.dim_size(3) << std::endl;
-    T *input_flat = in.flat<T>().data();
-    T *output_flat = out.flat<T>().data();
+    const T *input_flat = in; 
+    T *output_flat = out; 
 
     int c_blocks =  dims[3]/block_size; 
     if ((dims[3]%block_size) || (dims[3] < block_size)) { c_blocks = 1; block_size = dims[3];}
-
-    //std::cout << "mbits: " << mbits << ", block_size: " << block_size << ", c_blocks: " << c_blocks << std::endl;
 
     for (int d0 = 0; d0 < dims[0]; d0++) {
       for (int d1 = 0; d1 < dims[1]; d1++) {
@@ -154,14 +147,9 @@ struct BlockC_QuantEmuFunctor<CPUDevice, T> {
           for (int d3 = 0; d3 < c_blocks; d3++) {
 	    int tensor_offset = d0*dims[1]*dims[2]*dims[3] + d1*dims[2]*dims[3] + d2*dims[3]; 
             int block_offset = d3*block_size; 
-  	    T *input_block = &input_flat[tensor_offset + block_offset]; 
+  	    const T *input_block = &input_flat[tensor_offset + block_offset]; 
   	    T *output_block = &output_flat[tensor_offset + block_offset]; 
-#if 0
-            /* Compute absmax value for quantization */ 
-            T absfmax = 0; 
-	  #pragma omp parallel for reduction (max: absfmax)
-            for (int b=0; b < block_size; b++) if (fabs(input_block[b]) > absfmax) absfmax = fabs(input_block[b]);  
-#endif  
+
             QuantEmuFunctor<CPUDevice, T>()(
                 d,
                 mbits, 	
@@ -178,33 +166,22 @@ struct BlockC_QuantEmuFunctor<CPUDevice, T> {
 
 template <typename T>
 struct BlockCHW_QuantEmuFunctor<CPUDevice, T> {
-  void operator()(const CPUDevice& d, int mbits, int cblock, int rmode, Tensor in, Tensor out) {
-//    assert((in.dims() <= 4) && "quantemu_op does not support tensors with more than 4 dimentions" );  
-    if ( in.dims() > 4 ) { std::cout << "quantemu_op does not support tensors with more than 4 dimentions" << std::endl; exit (0); }
+  void operator()(const CPUDevice& d, int mbits, int *dims, int cblock, int rmode, const T *in, T *out) {
 
-    int dims[4] = { 1, 1, 1, 1}; 
-    for (int d=0; d < in.dims(); d++ ) dims[d] = in.dim_size(d); 
-    //std::cout << "dim3: " << dims[3] << ", dims2 : " << dims[2] <<", dims1 : " << dims[1] << ", dims0 : " << dims[0] << std::endl;
     int chw_blocks =  dims[1]/cblock; 
     if ((dims[1]%cblock) || (dims[1] < cblock)) { chw_blocks = 1; cblock = dims[1];}
     int block_size = cblock*dims[2]*dims[3];
-    //std::cout << "mbits: " << mbits << ", cblock_size : " << cblock << ", block_size: " << block_size << ", chw_blocks: " << chw_blocks << std::endl;
 
-    T *input_flat = in.flat<T>().data();
-    T *output_flat = out.flat<T>().data();
+    const T *input_flat = in; 
+    T *output_flat = out; 
 
     for (int d0 = 0; d0 < dims[0]; d0++) {
       for (int d1 = 0; d1 < chw_blocks; d1++) {
 	int tensor_offset = d0*dims[1]*dims[2]*dims[3];
         int block_offset = d1*block_size; 
-  	T *input_block = &input_flat[tensor_offset + block_offset]; 
+  	const T *input_block = &input_flat[tensor_offset + block_offset]; 
   	T *output_block = &output_flat[tensor_offset + block_offset]; 
-#if 0
-        /* Compute absmax value for quantization */ 
-        T absfmax = 0; 
-      #pragma omp parallel for reduction(max: absfmax)
-        for (int b=0; b < block_size; b++) if (fabs(input_block[b]) > absfmax) absfmax = fabs(input_block[b]);  
-#endif 
+
         QuantEmuFunctor<CPUDevice, T>()(
                 d,
                 mbits, 	
@@ -285,20 +262,10 @@ class QuantEmuOp : public OpKernel {
       case DFP_INT: 
       case DFP_UINT: 
       {
-//        std::cout << "DFP_xINT - block_type_ : " << block_type_ << std::endl;
         switch (block_type_ ) 
         {
           case NOBLOCK:
           { 
-#if 0
-            auto input_flat = input_tensor.flat<T>();
-            const int num_elements = input_flat.size();
-            /* Compute absmax value for quantization */ 
-            auto absfmax = 0.0; 
-            #pragma omp parallel for reduction(max: absfmax)
-            for (int i=0; i < num_elements; i++) if (fabs(input_flat(i)) > absfmax) absfmax = fabs(input_flat(i));  
-//            std::cout << "num_elements : " << num_elements << ", mbits : " << mbits  <<", absfmax val : " << absfmax << std::endl;
-#endif 
             QuantEmuFunctor<Device, T>()(
               context->eigen_device<Device>(),
               mbits, 	
@@ -310,30 +277,40 @@ class QuantEmuOp : public OpKernel {
           break; 
           case BLOCK_C: 
           {
-//	    assert((!data_format_.compare("channels_last")) && "BLOCK_C blocking mode is not suported on this data format, use NHWC data_format." );
-	    if (data_format_.compare("channels_last")) std::cout << "BLOCK_C blocking mode is not suported on this data format, use NHWC data_format." << std::endl;
-//	    std::cout << "BLOCK_C - block_type : " << block_type_ << ", block_size : " << block_size_ << std::endl; 
+	    if (data_format_.compare("channels_last")) { 
+	      std::cout << "BLOCK_C blocking mode is not suported on this data format, use NHWC data_format." << std::endl; exit(0); 
+            }
+            if ( input_tensor.dims() > 4 ) { std::cout << "quantemu_op does not support tensors with more than 4 dimentions" << std::endl; exit (0); }
+            int dims[4] = { 1, 1, 1, 1}; 
+            for (int d=0; d < input_tensor.dims(); d++ ) dims[d] = input_tensor.dim_size(d); 
+
             BlockC_QuantEmuFunctor<Device, T>()(
 	      context->eigen_device<Device>(), 
 	      mbits, 
+	      dims, 
               block_size_, 
 	      round_mode_, 
-	      input_tensor, 
-	      output_tensor); 
+              input_tensor.flat<T>().data(),
+              output_tensor.flat<T>().data());
           }
           break; 
           case BLOCK_CHW: 
           {
-//	    assert((!data_format_.compare("channels_first")) && "BLOCK_C blocking mode is not suported on this data format, use NHWC data_format." );
-	    if (data_format_.compare("channels_first")) std::cout << "BLOCK_C blocking mode is not suported on this data format, use NHWC data_format." << std::endl;
-//	    std::cout << "BLOCK_CHW - block_type : " << block_type_ << ", block_size : " << block_size_ << std::endl; 
+	    if (data_format_.compare("channels_first")) { 
+	       std::cout << "BLOCK_CHW blocking mode is not suported on this data format, use NCHW data_format." << std::endl; exit(0); 
+            }	
+            if ( input_tensor.dims() > 4 ) { std::cout << "quantemu_op does not support tensors with more than 4 dimentions" << std::endl; exit (0); }
+            int dims[4] = { 1, 1, 1, 1}; 
+            for (int d=0; d < input_tensor.dims(); d++ ) dims[d] = input_tensor.dim_size(d); 
+
             BlockCHW_QuantEmuFunctor<Device, T>()(
 	      context->eigen_device<Device>(), 
 	      mbits, 
+	      dims,
               block_size_, 
 	      round_mode_, 
-	      input_tensor, 
-	      output_tensor); 
+              input_tensor.flat<T>().data(),
+              output_tensor.flat<T>().data());
           }
           break; 
         }
@@ -367,7 +344,6 @@ class QuantEmuOp : public OpKernel {
 };
 
 template class QuantEmuOp<CPUDevice, float>; 
-
 /* Register the CPU kernels. */
 #define REGISTER_CPU(T)                                          \
   template struct QuantEmuFunctor<CPUDevice, T>;		 \
@@ -380,7 +356,7 @@ template class QuantEmuOp<CPUDevice, float>;
 
 REGISTER_CPU(float);
 
-#if 0 //def GOOGLE_CUDA
+#ifdef GOOGLE_CUDA
 
 template class QuantEmuOp<GPUDevice, float>; 
 /* Register the GPU kernels. */ 
