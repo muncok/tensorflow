@@ -56,6 +56,8 @@ from tensorflow.python.saved_model import tag_constants
 from tensorflow.python.tools import saved_model_utils
 from tensorflow.python.training import saver as saver_lib
 
+from tensorflow.contrib.nccl.python.ops import nccl_ops
+nccl_ops._maybe_load_nccl_ops_so()
 
 def freeze_graph_with_def_protos(input_graph_def,
                                  input_saver_def,

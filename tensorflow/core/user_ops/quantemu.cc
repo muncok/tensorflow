@@ -14,7 +14,8 @@ REGISTER_OP("QuantizeEmu")
     .Attr("T: {float, int32} = DT_FLOAT")
     .Input("to_quantize: T")
     .Output("quantized: T")
-    .Attr("data_format: {'unknown', 'channels_last', 'channels_first'}")
+    .Attr("data_format: {'unknown', 'channels_first', 'channels_last'}")
+    .Attr("allocate_copy: int = 0") 
     .Attr("output_data_type: int = 0")
     .Attr("output_precision: int = 23")
     .Attr("output_exponent_bits: int = 5")
@@ -27,6 +28,7 @@ REGISTER_OP("QuantizeEmu")
       c->set_output(0, c->input(0));
       return Status::OK(); 
     });
+    //.Attr("data_format: {'unknown', 'channels_last', 'channels_first'}")
 
 #define ROUNDING_CTRL (_MM_FROUND_TO_NEAREST_INT |_MM_FROUND_NO_EXC)
 #ifdef AVX512F
@@ -224,6 +226,7 @@ class QuantEmuOp : public OpKernel {
   explicit QuantEmuOp(OpKernelConstruction* context) : OpKernel(context) {
     /* aquire the OP attributes */ 
     OP_REQUIRES_OK(context, context->GetAttr("data_format", &data_format_));
+    OP_REQUIRES_OK(context, context->GetAttr("allocate_copy", &allocate_copy_));
     OP_REQUIRES_OK(context, context->GetAttr("output_data_type", &lpdata_type_));
     OP_REQUIRES_OK(context, context->GetAttr("output_precision", &mbits_));
     OP_REQUIRES_OK(context, context->GetAttr("output_exponent_bits", &exponent_bits_));
@@ -245,12 +248,18 @@ class QuantEmuOp : public OpKernel {
     //auto mbits_flat = nbits.flat<int32>(); 
     //int mbits = mbits_flat(0);
     int mbits = mbits_;
-    /* Create an output tensor */
+    Tensor *poutput_tensor;
     Tensor output_tensor;
 
-//    OP_REQUIRES_OK(context, context->allocate_output(0, input_tensor.shape(), &output_tensor));
-    CHECK(output_tensor.CopyFrom(input_tensor, input_tensor.shape()));
-    context->set_output(0, output_tensor);
+    if (allocate_copy_ == 1) { 
+      /* allocate fresh copy for quantized buffer */ 
+      OP_REQUIRES_OK(context, context->allocate_output(0, input_tensor.shape(), &poutput_tensor));
+    } else { 
+      /* use the same underlying buffer for both input and output tensors */  
+      CHECK(output_tensor.CopyFrom(input_tensor, input_tensor.shape()));
+      context->set_output(0, output_tensor);
+      poutput_tensor = &output_tensor; 
+    }
     
     /* Do the computation. */
     OP_REQUIRES(context, input_tensor.NumElements() <= tensorflow::kint32max,
@@ -272,7 +281,8 @@ class QuantEmuOp : public OpKernel {
 	      round_mode_,
               static_cast<int>(input_tensor.NumElements()),
               input_tensor.flat<T>().data(),
-              output_tensor.flat<T>().data());
+//              output_tensor.flat<T>().data());
+              poutput_tensor->flat<T>().data());
           }
           break; 
           case BLOCK_C: 
@@ -291,7 +301,8 @@ class QuantEmuOp : public OpKernel {
               block_size_, 
 	      round_mode_, 
               input_tensor.flat<T>().data(),
-              output_tensor.flat<T>().data());
+//              output_tensor.flat<T>().data());
+              poutput_tensor->flat<T>().data());
           }
           break; 
           case BLOCK_CHW: 
@@ -302,6 +313,7 @@ class QuantEmuOp : public OpKernel {
             if ( input_tensor.dims() > 4 ) { std::cout << "quantemu_op does not support tensors with more than 4 dimentions" << std::endl; exit (0); }
             int dims[4] = { 1, 1, 1, 1}; 
             for (int d=0; d < input_tensor.dims(); d++ ) dims[d] = input_tensor.dim_size(d); 
+            //std::cout << "CHW blocking : format: " << data_format_ << ", block_size : " << block_size_ << std::endl;
 
             BlockCHW_QuantEmuFunctor<Device, T>()(
 	      context->eigen_device<Device>(), 
@@ -310,7 +322,8 @@ class QuantEmuOp : public OpKernel {
               block_size_, 
 	      round_mode_, 
               input_tensor.flat<T>().data(),
-              output_tensor.flat<T>().data());
+//              output_tensor.flat<T>().data());
+              poutput_tensor->flat<T>().data());
           }
           break; 
         }
@@ -326,13 +339,15 @@ class QuantEmuOp : public OpKernel {
 	  round_mode_,
           static_cast<int>(input_tensor.NumElements()),
           input_tensor.flat<T>().data(),
-          output_tensor.flat<T>().data());
+//          output_tensor.flat<T>().data());
+          poutput_tensor->flat<T>().data());
       }
       break; 
     }
   }
  private: 
   string data_format_;
+  int allocate_copy_;
   int lpdata_type_;
   int mbits_;
   int exponent_bits_;

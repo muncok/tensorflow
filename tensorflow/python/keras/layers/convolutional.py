@@ -186,12 +186,16 @@ class Conv(Layer):
     self.built = True
 
   def call(self, inputs):
+    if self.data_format is 'channels_first' : inp_channels = inputs.get_shape()[1].value 
+    else : inp_channels = inputs.get_shape()[3].value
+
     enable_quantop = int(os.getenv('ENABLE_QUANTOP_CONV', 0))
     #print('quantop status' , enable_quantop, int(os.getenv('QUANTEMU_METHOD', 0)), int(os.getenv('QUANTEMU_EXPBITS', 5)))
-    if enable_quantop is 1:
+    if enable_quantop is 1 and inp_channels is not 3:
 #      print('quantop is enabled' , enable_quantop)
       inputs_qs = quantemu_ops.quantize_emu(inputs,
 			data_format=self.data_format, 
+			allocate_copy=int(os.getenv('QUANTEMU_ALLOCATE_COPY_ACTS', 0)), 
                         output_data_type=int(os.getenv('QUANTEMU_OUTPUT_TYPE', 0)),
                         output_precision=int(os.getenv('QUANTEMU_PRECISION_ACTS', 23)),
                         output_exponent_bits=int(os.getenv('QUANTEMU_EXPBITS', 5)),
@@ -202,6 +206,7 @@ class Conv(Layer):
                         gradient_precision=int(os.getenv('QUANTEMU_PRECISION_GRAD', 23)) ) 
       kernel_qs = quantemu_ops.quantize_emu(self.kernel,
 			data_format=self.data_format, 
+			allocate_copy=int(os.getenv('QUANTEMU_ALLOCATE_COPY_FILTER', 0)), 
                         output_data_type=int(os.getenv('QUANTEMU_OUTPUT_TYPE', 0)),
                         output_precision=int(os.getenv('QUANTEMU_PRECISION_FILTER', 23)),
                         output_exponent_bits=int(os.getenv('QUANTEMU_EXPBITS', 5)),
