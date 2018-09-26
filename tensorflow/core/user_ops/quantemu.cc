@@ -11,7 +11,8 @@ using CPUDevice = Eigen::ThreadPoolDevice;
 using GPUDevice = Eigen::GpuDevice;
 
 REGISTER_OP("QuantizeEmu")
-    .Attr("T: {float, int32} = DT_FLOAT")
+    //.Attr("T: {float, Eigen::half, int32} = DT_FLOAT")
+    .Attr("T: type")
     .Input("to_quantize: T")
     .Output("quantized: T")
     .Attr("data_format: {'unknown', 'channels_first', 'channels_last'}")
@@ -23,7 +24,8 @@ REGISTER_OP("QuantizeEmu")
     .Attr("input_channels_per_block: int = 0")
     .Attr("round_mode: int = 0")
     .Attr("quantize_gradients: int = 0")
-    .Attr("gradient_precision: int = 23")
+    .Attr("quantize_gradients_only: int = 0")
+//    .Attr("gradient_precision: int = 23")
     .SetShapeFn([](::tensorflow::shape_inference::InferenceContext* c) {
       c->set_output(0, c->input(0));
       return Status::OK(); 
@@ -234,7 +236,8 @@ class QuantEmuOp : public OpKernel {
     OP_REQUIRES_OK(context, context->GetAttr("input_channels_per_block", &block_size_));
     OP_REQUIRES_OK(context, context->GetAttr("round_mode", &round_mode_));
     OP_REQUIRES_OK(context, context->GetAttr("quantize_gradients", &quantize_grad_));
-    OP_REQUIRES_OK(context, context->GetAttr("gradient_precision", &mbits_grad_));
+    OP_REQUIRES_OK(context, context->GetAttr("quantize_gradients_only", &quantize_grad_only_));
+//    OP_REQUIRES_OK(context, context->GetAttr("gradient_precision", &mbits_grad_));
 
 //    std::cout << "data_format : " << data_format_ << ", lpdata_type: " << lpdata_type_ << ", mbits_: " << mbits_ << 
 //     ", exponent_bits_: " << exponent_bits_ << ", quantize_grad_: " << quantize_grad_ << ", mbits_grad_ : " << mbits_grad_ << 
@@ -260,6 +263,9 @@ class QuantEmuOp : public OpKernel {
       context->set_output(0, output_tensor);
       poutput_tensor = &output_tensor; 
     }
+
+    /* this op is used for quantizing gradients only -- forward pass just returns the same tensor */ 
+    if (quantize_grad_only_ == 1) return;
     
     /* Do the computation. */
     OP_REQUIRES(context, input_tensor.NumElements() <= tensorflow::kint32max,
@@ -355,10 +361,12 @@ class QuantEmuOp : public OpKernel {
   int block_size_;
   int round_mode_;
   int quantize_grad_;
-  int mbits_grad_; 
+  int quantize_grad_only_;
+//  int mbits_grad_; 
 };
-
+#if 0
 template class QuantEmuOp<CPUDevice, float>; 
+template class QuantEmuOp<CPUDevice, Eigen::half>; 
 /* Register the CPU kernels. */
 #define REGISTER_CPU(T)                                          \
   template struct QuantEmuFunctor<CPUDevice, T>;		 \
@@ -370,10 +378,12 @@ template class QuantEmuOp<CPUDevice, float>;
       QuantEmuOp<CPUDevice, T>);
 
 REGISTER_CPU(float);
-
+REGISTER_CPU(Eigen::half);
+#endif 
 #ifdef GOOGLE_CUDA
 
 template class QuantEmuOp<GPUDevice, float>; 
+template class QuantEmuOp<GPUDevice, Eigen::half>; 
 /* Register the GPU kernels. */ 
 #define REGISTER_GPU(T)                                              \
   template struct QuantEmuFunctor<GPUDevice, T>;              	     \
@@ -385,5 +395,6 @@ template class QuantEmuOp<GPUDevice, float>;
       QuantEmuOp<GPUDevice, T>);
 
 REGISTER_GPU(float);
+REGISTER_GPU(Eigen::half);
 
 #endif /* GOOGLE_CUDA */

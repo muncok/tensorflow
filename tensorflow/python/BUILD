@@ -78,6 +78,7 @@ py_library(
     deps = [
         ":array_ops",
         ":quantemu_ops",
+        ":lowprecision_ops",
         ":bitwise_ops",
         ":boosted_trees_ops",
         ":check_ops",
@@ -1702,6 +1703,12 @@ py_library(
 py_library(
     name = "quantemu_ops",
     srcs = ["ops/quantemu_ops.py"],
+    srcs_version = "PY2AND3",
+)
+
+py_library(
+    name = "lowprecision_ops",
+    srcs = ["ops/lowprecision_ops.py"],
     srcs_version = "PY2AND3",
 )
 

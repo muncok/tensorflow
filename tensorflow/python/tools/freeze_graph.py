@@ -55,9 +55,11 @@ from tensorflow.python.saved_model import loader
 from tensorflow.python.saved_model import tag_constants
 from tensorflow.python.tools import saved_model_utils
 from tensorflow.python.training import saver as saver_lib
-
 from tensorflow.contrib.nccl.python.ops import nccl_ops
 nccl_ops._maybe_load_nccl_ops_so()
+
+import tensorflow as tf 
+import os 
 
 def freeze_graph_with_def_protos(input_graph_def,
                                  input_saver_def,
@@ -98,6 +100,7 @@ def freeze_graph_with_def_protos(input_graph_def,
         node.device = ""
 
   if input_graph_def:
+    tf.load_op_library(os.path.join(tf.resource_loader.get_root_dir_with_all_resources(), '../../core/user_ops/quantemu.so'))
     _ = importer.import_graph_def(input_graph_def, name="")
   with session.Session() as sess:
     if input_saver_def:

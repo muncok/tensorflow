@@ -186,41 +186,62 @@ class Conv(Layer):
     self.built = True
 
   def call(self, inputs):
-    if self.data_format is 'channels_first' : inp_channels = inputs.get_shape()[1].value 
-    else : inp_channels = inputs.get_shape()[3].value
+    if self.data_format == 'channels_first' : 
+      inp_channels = inputs.get_shape()[1].value 
+    else : 
+      inp_channels = inputs.get_shape()[3].value
+    enable_quantop_input = int(os.getenv('ENABLE_QUANTOP_CONV_INPUTS', 0))
+    enable_quantop_output = int(os.getenv('ENABLE_QUANTOP_CONV_OUTPUTS', 0))
+    skip_first_layer = int(os.getenv('QUANTEMU_SKIP_FIRST_LAYER', 0))
 
-    enable_quantop = int(os.getenv('ENABLE_QUANTOP_CONV', 0))
     #print('quantop status' , enable_quantop, int(os.getenv('QUANTEMU_METHOD', 0)), int(os.getenv('QUANTEMU_EXPBITS', 5)))
-    if enable_quantop is 1 and inp_channels is not 3:
-#      print('quantop is enabled' , enable_quantop)
-      inputs_qs = quantemu_ops.quantize_emu(inputs,
-			data_format=self.data_format, 
-			allocate_copy=int(os.getenv('QUANTEMU_ALLOCATE_COPY_ACTS', 0)), 
-                        output_data_type=int(os.getenv('QUANTEMU_OUTPUT_TYPE', 0)),
-                        output_precision=int(os.getenv('QUANTEMU_PRECISION_ACTS', 23)),
-                        output_exponent_bits=int(os.getenv('QUANTEMU_EXPBITS', 5)),
-                        channel_blocking_type=int(os.getenv('QUANTEMU_CBLOCK_TYPE_ACTS', 0)),
-                        input_channels_per_block=int(os.getenv('QUANTEMU_CBLOCK_SIZE_ACTS', 0)),
-                        round_mode=int(os.getenv('QUANTEMU_RMODE_ACTS', 0)), 
-                        quantize_gradients=int(os.getenv('ENABLE_QUANTGRAD_CONV', 0)),
-                        gradient_precision=int(os.getenv('QUANTEMU_PRECISION_GRAD', 23)) ) 
-      kernel_qs = quantemu_ops.quantize_emu(self.kernel,
-			data_format=self.data_format, 
-			allocate_copy=int(os.getenv('QUANTEMU_ALLOCATE_COPY_FILTER', 0)), 
-                        output_data_type=int(os.getenv('QUANTEMU_OUTPUT_TYPE', 0)),
-                        output_precision=int(os.getenv('QUANTEMU_PRECISION_FILTER', 23)),
-                        output_exponent_bits=int(os.getenv('QUANTEMU_EXPBITS', 5)),
-                        channel_blocking_type=int(os.getenv('QUANTEMU_CBLOCK_TYPE_FILTER', 0)),
-                        input_channels_per_block=int(os.getenv('QUANTEMU_CBLOCK_SIZE_FILTER', 0)),
-                        round_mode=int(os.getenv('QUANTEMU_RMODE_FILTER', 0)), 
-                        quantize_gradients=int(os.getenv('ENABLE_QUANTGRAD_CONV', 0)),
-                        gradient_precision=int(os.getenv('QUANTEMU_PRECISION_GRAD', 23)) ) 
+    if enable_quantop_input == 1 : 
+      if inp_channels == 3 and skip_first_layer == 1 :
+        outputs = self._convolution_op(inputs, self.kernel)
+      else : 
+        inputs_qs = quantemu_ops.quantize_emu(inputs,
+		data_format=self.data_format, 
+		allocate_copy=int(os.getenv('QUANTEMU_ALLOCATE_COPY_INPUTS', 0)), 
+                output_data_type=int(os.getenv('QUANTEMU_LPDATA_TYPE', 0)),
+                output_precision=int(os.getenv('QUANTEMU_PRECISION_INPUTS', 23)),
+                output_exponent_bits=int(os.getenv('QUANTEMU_EXPBITS', 5)),
+                channel_blocking_type=int(os.getenv('QUANTEMU_CBLOCK_TYPE_INPUTS', 0)),
+                input_channels_per_block=int(os.getenv('QUANTEMU_CBLOCK_SIZE_INPUTS', 0)),
+                round_mode=int(os.getenv('QUANTEMU_RMODE_INPUTS', 0)), 
+                quantize_gradients=int(os.getenv('ENABLE_QUANTGRAD_CONV_INPUTS', 0)),
+                quantize_gradients_only=int(0) ) 
 
-      outputs = self._convolution_op(inputs_qs, kernel_qs)
+        kernel_qs = quantemu_ops.quantize_emu(self.kernel,
+		data_format=self.data_format, 
+		allocate_copy=int(os.getenv('QUANTEMU_ALLOCATE_COPY_FILTER', 0)), 
+                output_data_type=int(os.getenv('QUANTEMU_LPDATA_TYPE', 0)),
+                output_precision=int(os.getenv('QUANTEMU_PRECISION_FILTER', 23)),
+                output_exponent_bits=int(os.getenv('QUANTEMU_EXPBITS', 5)),
+                channel_blocking_type=int(os.getenv('QUANTEMU_CBLOCK_TYPE_FILTER', 0)),
+                input_channels_per_block=int(os.getenv('QUANTEMU_CBLOCK_SIZE_FILTER', 0)),
+                round_mode=int(os.getenv('QUANTEMU_RMODE_FILTER', 0)), 
+                quantize_gradients=int(0), 
+                quantize_gradients_only=int(0) ) 
+
+        outputs = self._convolution_op(inputs_qs, kernel_qs)
+
     else :
       outputs = self._convolution_op(inputs, self.kernel)
 
 #    outputs = self._convolution_op(inputs, self.kernel)
+
+    if enable_quantop_output == 1 : 
+      outputs = quantemu_ops.quantize_emu(outputs,
+		data_format=self.data_format, 
+		allocate_copy=int(os.getenv('QUANTEMU_ALLOCATE_COPY_OUTPUTS', 0)), 
+                output_data_type=int(os.getenv('QUANTEMU_LPDATA_TYPE', 0)),
+                output_precision=int(os.getenv('QUANTEMU_PRECISION_OUTPUTS', 23)),
+                output_exponent_bits=int(os.getenv('QUANTEMU_EXPBITS', 5)),
+                channel_blocking_type=int(os.getenv('QUANTEMU_CBLOCK_TYPE_OUTPUTS', 0)),
+                input_channels_per_block=int(os.getenv('QUANTEMU_CBLOCK_SIZE_OUTPUTS', 0)),
+                round_mode=int(os.getenv('QUANTEMU_RMODE_OUTPUTS', 0)), 
+                quantize_gradients=int(os.getenv('ENABLE_QUANTGRAD_CONV_OUTPUTS', 0)),
+                quantize_gradients_only=int(0) ) 
 
     if self.use_bias:
       if self.data_format == 'channels_first':
