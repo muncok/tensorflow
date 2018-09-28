@@ -8,11 +8,13 @@ using GPUDevice = Eigen::GpuDevice;
 //using float16 = Eigen::half; 
 //using __half = Eigen::half; 
 
-#define CUBLOCK_SIZE 512 
+#define CUBLOCK_SIZE 128 
 //#define CUSTREAMS 64 
 
-//__device__ __half atomicMaxf(__half *address_half, __half val_half)
-__device__ Eigen::half atomicMaxf(Eigen::half *address_half, float val)
+__device__ 
+Eigen::half atomicMaxf(
+	Eigen::half *address_half, 
+	float val)
 {
     float address = __half2float (*address_half);
 //    float val = __half2float(val_half); 
@@ -28,7 +30,10 @@ __device__ Eigen::half atomicMaxf(Eigen::half *address_half, float val)
     return __float2half(fin); 
 }
 
-__device__ float atomicMaxf(float* address, float val)
+__device__ 
+float atomicMaxf(
+	float* address, 
+	float val)
 {
     int *address_as_int =(int*)address;
     int old = *address_as_int, assumed;
@@ -40,8 +45,13 @@ __device__ float atomicMaxf(float* address, float val)
     return __int_as_float(old);
 }
 
-//__global__ void max_reduce(const __half* const d_array, __half *d_max, const int block_offset, const int block_size)
-__global__ void max_reduce(const Eigen::half* const d_array, Eigen::half *d_max, const int block_offset, const int block_size)
+__global__ 
+void max_reduce(
+	const Eigen::half* 
+	const d_array, 
+	Eigen::half *d_max, 
+	const int block_offset, 
+	const int block_size)
 {
     volatile __shared__ float shared[CUBLOCK_SIZE]; 
 
@@ -69,7 +79,12 @@ __global__ void max_reduce(const Eigen::half* const d_array, Eigen::half *d_max,
       atomicMaxf(d_max, shared[0]);
 }
 
-__global__ void max_reduce(const float* const d_array, float* d_max, const int block_offset, const int block_size)
+__global__ 
+void max_reduce(
+	const float* const d_array, 
+	float* d_max, 
+	const int block_offset, 
+	const int block_size)
 {
     volatile __shared__ float shared[CUBLOCK_SIZE]; 
 
@@ -95,47 +110,6 @@ __global__ void max_reduce(const float* const d_array, float* d_max, const int b
       atomicMaxf(d_max, shared[0]);
 }
 
-__global__ void QuantEmuCudaKernel(int mbits, Eigen::half *absmax, int rmode, const int block_offset, const int block_size, const Eigen::half *in, Eigen::half *out) {
-
-  int quant_max; 
-  float sfquant;
-  float sfdequant;
-  float sfquant_br; 
-
-  //quant_max = pow(2, mbits-1) - 1;
-  quant_max = (int)((0x1 << (mbits-1)) - 1);
-  sfquant = (float)(quant_max / __half2float(*absmax));
-  sfdequant = (float)1.0/sfquant;
-  sfquant_br = sfquant * 4.0;  /* quantize to nbits + 2, we need them for rounding */ 
-
-  int tid = threadIdx.x;
-  int gid = (blockDim.x * blockIdx.x) + tid + block_offset;
-  int size = block_offset + block_size; 
-  float fabsmax = __half2float(*absmax); 
- 
-  for (int gid = (blockIdx.x * blockDim.x) + threadIdx.x + block_offset; gid < size; gid += blockDim.x * gridDim.x) {
-//  for (gid; gid < size; gid += blockDim.x*gridDim.x) {
-      float inval = __half2float(in[gid]);
-      /* saturate anything larger than fmax_val to fmax_val */
-      fminf (inval, fabsmax); 
-      fmaxf (inval, -fabsmax);
-      int ival = (int)(inval * sfquant);
-      int rbias = ((int)(inval * sfquant_br)) & 0x3;
-
-      //if (in[i] == 0.0) { ival = 0; rbias = 0; }
-      int negative = (ival < 0);
-      /* disable sign bit for rounding */
-      if(negative) ival = 0 - ival;
-      ival += ((rmode==BIASED) & (rbias > 0));
-      ival += ((rmode==NEAREST) & (rbias > 1));
-      /* saturate after rounding */
-      if (ival > quant_max) ival = quant_max;
-      /* restore sign */
-      if(negative) ival = 0 - ival;
-
-      out[gid] = __float2half (ival * sfdequant);
-  }
-}
 #if 0 
 template <typename T>
 __global__ void QuantEmuCudaKernel(int mbits, T *absmax, int rmode, const int block_offset, const int block_size, const T* in, T* out) {
@@ -181,15 +155,74 @@ __global__ void QuantEmuCudaKernel(int mbits, T *absmax, int rmode, const int bl
 }
 
 #else 
-__global__ void QuantEmuCudaKernel(int mbits, float *absmax, int rmode, const int block_offset, const int block_size, const float* in, float* out) {
-
+__global__ 
+void QuantEmuCudaKernel(
+	int mbits, 
+	Eigen::half *absmax, 
+	int rmode, 
+	const int block_offset, 
+	const int block_size, 
+	const Eigen::half *in, 
+	Eigen::half *out) 
+{
   int quant_max; 
   float sfquant;
   float sfdequant;
   float sfquant_br; 
 
-  //quant_max = pow(2, mbits-1) - 1;
-  quant_max = (int)((0x1 << (mbits-1)) - 1);
+  quant_max = pow(2, mbits-1) - 1;
+  //quant_max = (int)((0x1 << (mbits-1)) - 1);
+  sfquant = (float)(quant_max / __half2float(*absmax));
+  sfdequant = (float)1.0/sfquant;
+  sfquant_br = sfquant * 4.0;  /* quantize to nbits + 2, we need them for rounding */ 
+
+  int tid = threadIdx.x;
+  int gid = (blockDim.x * blockIdx.x) + tid + block_offset;
+  int size = block_offset + block_size; 
+  float fabsmax = __half2float(*absmax); 
+ 
+  for (int gid = (blockIdx.x * blockDim.x) + threadIdx.x + block_offset; gid < size; gid += blockDim.x * gridDim.x) {
+//  for (gid; gid < size; gid += blockDim.x*gridDim.x) {
+      float inval = __half2float(in[gid]);
+      /* saturate anything larger than fmax_val to fmax_val */
+      //fminf (inval, fabsmax); 
+      //fmaxf (inval, -fabsmax);
+      //int ival = (int)(inval * sfquant);
+      /* round to nearest even */ 
+      int ival = __half2int_rn (inval * sfquant);
+#if 0
+      int rbias = ((int)(inval * sfquant_br)) & 0x3;
+      if (in[gid] == 0.0) { ival = 0; rbias = 0; }
+      int negative = (ival < 0);
+      /* disable sign bit for rounding */
+      if(negative) ival = 0 - ival;
+      ival += ((rmode==BIASED) & (rbias > 0));
+      ival += ((rmode==NEAREST) & (rbias > 1));
+      /* saturate after rounding */
+      if (ival > quant_max) ival = quant_max;
+      /* restore sign */
+      if(negative) ival = 0 - ival;
+#endif 
+      out[gid] = __float2half (ival * sfdequant);
+  }
+}
+
+__global__ 
+void QuantEmuCudaKernel(
+	int mbits, 
+	float *absmax, 
+	int rmode, 
+	const int block_offset, 
+	const int block_size, 
+	const float* in, float* out) 
+{
+  int quant_max; 
+  float sfquant;
+  float sfdequant;
+  float sfquant_br; 
+
+  quant_max = pow(2, mbits-1) - 1;
+  //quant_max = (int)((0x1 << (mbits-1)) - 1);
   sfquant = (float)(quant_max / *absmax);
   sfdequant = (float)1.0/sfquant;
   sfquant_br = sfquant * 4.0;  /* quantize to nbits + 2, we need them for rounding */ 
@@ -200,15 +233,16 @@ __global__ void QuantEmuCudaKernel(int mbits, float *absmax, int rmode, const in
   float fabsmax = *absmax; 
  
   for (int gid = (blockIdx.x * blockDim.x) + threadIdx.x + block_offset; gid < size; gid += blockDim.x * gridDim.x) {
-//  for (gid; gid < size; gid += blockDim.x*gridDim.x) {
+  //for (gid; gid < size; gid += blockDim.x*gridDim.x) {
       float inval = in[gid];
       /* saturate anything larger than fmax_val to fmax_val */
       fminf (inval, fabsmax); 
       fmaxf (inval, -fabsmax);
-      int ival = (int)(inval * sfquant);
+      /* round to the nearest even */ 
+      int ival = __float2int_rn (inval * sfquant);
+#if 0
       int rbias = ((int)(inval * sfquant_br)) & 0x3;
-#if 10
-      //if (in[i] == 0.0) { ival = 0; rbias = 0; }
+      if (in[gid] == 0.0) { ival = 0; rbias = 0; }
       int negative = (ival < 0);
       /* disable sign bit for rounding */
       if(negative) ival = 0 - ival;
@@ -248,8 +282,15 @@ __global__ void QuantEmuLowpCudaKernel(int mbits, int exp_bits, int rmode, const
   }
 }
 #else 
-__global__ void QuantEmuLowpCudaKernel(int mbits, int exp_bits, int rmode, const int size, const float *in, float *out) {
-
+__global__ 
+void QuantEmuLowpCudaKernel(
+	int mbits, 
+	int exp_bits, 
+	int rmode, 
+	const int size, 
+	const float *in, 
+	float *out) 
+{
   int non_mant_bits = exp_bits + 1; /* exponent + sign */
   int shift = 10 - (mbits - non_mant_bits);
   unsigned short lowpfp_mask = (unsigned short)(0xFFFF << shift);
@@ -265,8 +306,15 @@ __global__ void QuantEmuLowpCudaKernel(int mbits, int exp_bits, int rmode, const
   }
 }
 
-__global__ void QuantEmuLowpCudaKernel(int mbits, int exp_bits, int rmode, const int size, const Eigen::half* in, Eigen::half* out) {
-
+__global__ 
+void QuantEmuLowpCudaKernel(
+	int mbits, 
+	int exp_bits, 
+	int rmode, 
+	const int size, 
+	const Eigen::half* in, 
+	Eigen::half* out) 
+{
   int non_mant_bits = exp_bits + 1; /* exponent + sign */
   int shift = 10 - (mbits - non_mant_bits);
   unsigned short lowpfp_mask = (unsigned short)(0xFFFF << shift);
