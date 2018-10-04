@@ -25,12 +25,10 @@ REGISTER_OP("QuantizeEmu")
     .Attr("round_mode: int = 0")
     .Attr("quantize_gradients: int = 0")
     .Attr("quantize_gradients_only: int = 0")
-//    .Attr("gradient_precision: int = 23")
     .SetShapeFn([](::tensorflow::shape_inference::InferenceContext* c) {
       c->set_output(0, c->input(0));
       return Status::OK(); 
     });
-    //.Attr("data_format: {'unknown', 'channels_last', 'channels_first'}")
 
 #define ROUNDING_CTRL (_MM_FROUND_TO_NEAREST_INT |_MM_FROUND_NO_EXC)
 #ifdef AVX512F
@@ -39,8 +37,7 @@ __m512 _mm512_cvtpsph_ps(__m512 reg)
   __m256i hreg  = _mm512_cvtps_ph(reg, ROUNDING_CTRL);
   return  _mm512_cvtph_ps (hreg);
 }
-#endif 
-#ifdef AVX 
+#elif AVX 
 __m256 _mm256_cvtpsph_ps(__m256 reg)
 {
   __m128i hreg  = _mm256_cvtps_ph(reg, ROUNDING_CTRL);
@@ -52,7 +49,7 @@ template <typename T>
 struct QuantEmuFunctor<CPUDevice, T> {
   void operator()(const CPUDevice& d, int mbits, int rmode, int size, const T* in, T* out) {
 
-//    std::cout << " *** Inside the QuantEmuFunctor CPU version "<< size  << std::endl; 
+    //std::cout << " *** Inside the QuantEmuFunctor CPU version "<< size  << std::endl; 
     T absmax = 0.0; 
     #pragma omp parallel for reduction(max: absmax)
     for (int i=0; i < size; i++) if (fabs(in[i]) > absmax) absmax = fabs(in[i]);  
@@ -65,72 +62,89 @@ struct QuantEmuFunctor<CPUDevice, T> {
     __m256 vsfquant    = _mm256_set1_ps (sfquant);
     __m256 vsfdequant    = _mm256_set1_ps (sfdequant);
 #if 0
-    __m256 vsfquant_br = _mm256_set1_ps (sfquant_br);
-    __m256 vmaxpos     = _mm256_set1_ps (absmax);
-    __m256 vmaxneg     = _mm256_set1_ps (-absmax);
-    __m256i vrmask     = _mm256_set1_epi32 (0x3);
-    __m256i vposone    = _mm256_set1_epi32 (1);
-    __m256i vzero      = _mm256_set1_epi32 (0);
-    __m256i vnegone    = _mm256_set1_epi32 (-1);
-
-    __m256i vrthreshold  = _mm256_set1_epi32 (0x0); /* BIASED */
-    if (rmode==NEAREST) vrthreshold  = _mm256_set1_epi32 (0x0); /* NEAREST */
 #endif 
 
-  if ( size%8 == 0 ) 
-  {
-    #pragma omp parallel for 
-    for (int i = 0; i < size; i+=8) {
-      __m256 vinp = _mm256_load_ps (&in[i]);
+    if ( size%16 == 0 ) 
+    {
+#ifdef AVX512F
+      __m512 vmaxpos     = _mm512_set1_ps (absmax);
+      __m512 vmaxneg     = _mm512_set1_ps (-absmax);
+      #pragma omp parallel for 
+      for (int i = 0; i < size; i+=16) {
+        __m512 vinp = _mm512_load_ps (&in[i]);
+        /* saturate to absmax value */ 
+        vinp = _mm512_min_ps (vinp, vmaxpos); 
+        vinp = _mm512_max_ps (vinp, vmaxneg); 
+
+        /* quantize */ 
+        //__m512i vint    = _mm512_cvtps_epi32 (_mm512_mul_ps (vinp, vsfquant));
+        /* quantize and round to nearest even */ 
+        __m512i vint    = _mm512_rint_ps(_mm512_mul_ps (vinp, vsfquant));
+        /* dequantize */ 
+        __m512 vout = _mm512_mul_ps ( _mm512_cvtepi32_ps (vint), vsfdequant); 
+
+        _mm512_store_ps (&out[i], vout); 
+      }
+#elif AVX
+      __m256 vmaxpos     = _mm256_set1_ps (absmax);
+      __m256 vmaxneg     = _mm256_set1_ps (-absmax);
 #if 0
-      /* saturate to max value */ 
-      __mmask8 possatmask = _mm256_cmp_ps_mask (vinp, vmaxpos, (const int)_CMP_GT_OQ);  
-      __mmask8 negsatmask = _mm256_cmp_ps_mask (vinp, vmaxneg, (const int)_CMP_LT_OQ); 
-      __m256 vinpsat = _mm256_mask_mov_ps (vinp, possatmask, vmaxpos); 
-      vinpsat = _mm256_mask_mov_ps (vinpsat, negsatmask, vmaxneg); 
+      __m256 vsfquant_br = _mm256_set1_ps (sfquant_br);
+      __m256i vrmask     = _mm256_set1_epi32 (0x3);
+      __m256i vposone    = _mm256_set1_epi32 (1);
+      __m256i vzero      = _mm256_set1_epi32 (0);
+      __m256i vnegone    = _mm256_set1_epi32 (-1);
+
+      __m256i vrthreshold  = _mm256_set1_epi32 (0x0); /* BIASED */
+      if (rmode==NEAREST) vrthreshold  = _mm256_set1_epi32 (0x0); /* NEAREST */
 #endif 
-      /* quantize */ 
-      __m256i vint    = _mm256_cvtps_epi32 (_mm256_mul_ps (vinp, vsfquant));
+      #pragma omp parallel for 
+      for (int i = 0; i < size; i+=8) {
+        __m256 vinp = _mm256_load_ps (&in[i]);
+        vinp = _mm256_min_ps (vinp, vmaxpos); 
+        vinp = _mm256_max_ps (vinp, vmaxneg); 
+        /* quantize */ 
+        __m256i vint    = _mm256_cvtps_epi32 (_mm256_mul_ps (vinp, vsfquant));
 #if 0      
-      __m256i vint_br =_mm256_and_si256 (_mm256_cvtps_epi32 (_mm256_mul_ps (vinp, vsfquant_br)), vrmask);
-      /* flip sign and round */ 
-      __mmask8 rmask  = _mm256_cmp_epi32_mask (vint_br, vrthreshold, _MM_CMPINT_NLE);
-      __m256i vsignflip = _mm256_mask_mov_epi32 (vposone, _mm256_cmp_epi32_mask (vint, vzero, _MM_CMPINT_LT), vnegone ); 
-      __m256i vuint = _mm256_mul_epi32 (vint, vsignflip); 
-      vuint = _mm256_mask_add_epi32 (vuint, rmask, vuint, vposone);
-      vint = _mm256_mul_epi32 (vuint, vsignflip); 
+        __m256i vint_br =_mm256_and_si256 (_mm256_cvtps_epi32 (_mm256_mul_ps (vinp, vsfquant_br)), vrmask);
+        /* flip sign and round */ 
+        __mmask8 rmask  = _mm256_cmp_epi32_mask (vint_br, vrthreshold, _MM_CMPINT_NLE);
+        __m256i vsignflip = _mm256_mask_mov_epi32 (vposone, _mm256_cmp_epi32_mask (vint, vzero, _MM_CMPINT_LT), vnegone ); 
+        __m256i vuint = _mm256_mul_epi32 (vint, vsignflip); 
+        vuint = _mm256_mask_add_epi32 (vuint, rmask, vuint, vposone);
+        vint = _mm256_mul_epi32 (vuint, vsignflip); 
 #endif 
-      /* dequantize */ 
-      __m256 vout = _mm256_mul_ps ( _mm256_cvtepi32_ps (vint), vsfdequant); 
-
-      _mm256_store_ps (&out[i], vout); 
-    }
-  } else {
+        /* dequantize */ 
+        __m256 vout = _mm256_mul_ps ( _mm256_cvtepi32_ps (vint), vsfdequant); 
+        _mm256_store_ps (&out[i], vout); 
+      }
+#endif 
+    } else {
  
-    #pragma omp parallel for 
-    for (int i = 0; i < size; ++i) {
-      T inval = in[i];
+      #pragma omp parallel for 
+      for (int i = 0; i < size; ++i) {
+        T inval = in[i];
 
-      /* saturate anything larger than fmax_val to fmax_val */
-      if (inval > absmax && inval > 0 ) inval = absmax;
-      if (fabs(inval) > absmax && inval < 0 ) inval = -absmax;
+        /* saturate anything larger than fmax_val to fmax_val */
+        if (inval > absmax && inval > 0 ) inval = absmax;
+        if (fabs(inval) > absmax && inval < 0 ) inval = -absmax;
 
-      int ival = (int)(inval * sfquant);
-      int rbias = ((int)(inval * sfquant_br)) & 0x3;
-      //if (in[i] == 0.0) { ival = 0; rbias = 0; }
-      int negative = (ival < 0);
-      /* disable sign bit for rounding */
-      if(negative) ival = 0 - ival;
-      ival += ((rmode==BIASED) & (rbias > 0));
-      ival += ((rmode==NEAREST) & (rbias > 1));
-      /* saturate after rounding */
-      if (ival > quant_max) ival = quant_max;
-      /* restore sign */
-      if(negative) ival = 0 - ival;
+        int ival = (int)(inval * sfquant);
+        int rbias = ((int)(inval * sfquant_br)) & 0x3;
+        //if (in[i] == 0.0) { ival = 0; rbias = 0; }
+        int negative = (ival < 0);
+        /* disable sign bit for rounding */
+        if(negative) ival = 0 - ival;
+        ival += ((rmode==BIASED) & (rbias > 0));
+        ival += ((rmode==NEAREST) & (rbias > 1));
+        /* saturate after rounding */
+        if (ival > quant_max) ival = quant_max;
+        /* restore sign */
+        if(negative) ival = 0 - ival;
 
-      out[i] = ival * sfdequant;
+        out[i] = ival * sfdequant;
+      }
     }
-  }
   }
 };
 
@@ -203,7 +217,8 @@ struct LowpFloatQuantEmuFunctor <CPUDevice, T> {
   void operator()(const CPUDevice& d, int mbits, int exp_bits, int rmode, int size, const T* in, T* out) {
 
     int non_mant_bits = exp_bits + 1; /* exponent + sign */
-//    std::cout << "LowpFloatQuantEmuFunctor, non_mant_bits: " << non_mant_bits << ", mbits: " << mbits << ", size: " << size << std::endl;
+    //std::cout << "LowpFloatQuantEmuFunctor, non_mant_bits: " << non_mant_bits << ", mbits: " << mbits 
+    // << ", size: " << size << std::endl;
     if (mbits <= non_mant_bits) { printf("LPFP size cannot be <=5\n"); exit (0); }
     int shift = 10 - (mbits - non_mant_bits);
     unsigned short lowpfp_mask = (unsigned short)(0xFFFF << shift);
@@ -237,11 +252,10 @@ class QuantEmuOp : public OpKernel {
     OP_REQUIRES_OK(context, context->GetAttr("round_mode", &round_mode_));
     OP_REQUIRES_OK(context, context->GetAttr("quantize_gradients", &quantize_grad_));
     OP_REQUIRES_OK(context, context->GetAttr("quantize_gradients_only", &quantize_grad_only_));
-//    OP_REQUIRES_OK(context, context->GetAttr("gradient_precision", &mbits_grad_));
 
-//    std::cout << "data_format : " << data_format_ << ", lpdata_type: " << lpdata_type_ << ", mbits_: " << mbits_ << 
-//     ", exponent_bits_: " << exponent_bits_ << ", quantize_grad_: " << quantize_grad_ << ", mbits_grad_ : " << mbits_grad_ << 
-//     ", block_type: " << block_type_ << ", block_size: " << block_size_ << ", round_mode: " << round_mode_ << std::endl;
+    //std::cout << "data_format : " << data_format_ << ", lpdata_type: " << lpdata_type_ << ", mbits_: " << mbits_ << 
+    // ", exponent_bits_: " << exponent_bits_ << ", quantize_grad_: " << quantize_grad_ << ", mbits_grad_ : " << mbits_grad_ << 
+    // ", block_type: " << block_type_ << ", block_size: " << block_size_ << ", round_mode: " << round_mode_ << std::endl;
   }
 
   void Compute(OpKernelContext* context) override {
@@ -287,7 +301,7 @@ class QuantEmuOp : public OpKernel {
 	      round_mode_,
               static_cast<int>(input_tensor.NumElements()),
               input_tensor.flat<T>().data(),
-//              output_tensor.flat<T>().data());
+              //output_tensor.flat<T>().data());
               poutput_tensor->flat<T>().data());
           }
           break; 
@@ -307,7 +321,7 @@ class QuantEmuOp : public OpKernel {
               block_size_, 
 	      round_mode_, 
               input_tensor.flat<T>().data(),
-//              output_tensor.flat<T>().data());
+              //output_tensor.flat<T>().data());
               poutput_tensor->flat<T>().data());
           }
           break; 
@@ -328,7 +342,7 @@ class QuantEmuOp : public OpKernel {
               block_size_, 
 	      round_mode_, 
               input_tensor.flat<T>().data(),
-//              output_tensor.flat<T>().data());
+              //output_tensor.flat<T>().data());
               poutput_tensor->flat<T>().data());
           }
           break; 
@@ -337,7 +351,7 @@ class QuantEmuOp : public OpKernel {
       break; 
       case LOWP_FP: 
       {
-//	std::cout << "LowpFP quantization called" << ", mbits : " << mbits <<  std::endl; 
+	//std::cout << "LowpFP quantization called" << ", mbits : " << mbits <<  std::endl; 
         LowpFloatQuantEmuFunctor<Device, T>()(
           context->eigen_device<Device>(),
           mbits, 	
@@ -345,7 +359,7 @@ class QuantEmuOp : public OpKernel {
 	  round_mode_,
           static_cast<int>(input_tensor.NumElements()),
           input_tensor.flat<T>().data(),
-//          output_tensor.flat<T>().data());
+          //output_tensor.flat<T>().data());
           poutput_tensor->flat<T>().data());
       }
       break; 
@@ -362,8 +376,9 @@ class QuantEmuOp : public OpKernel {
   int round_mode_;
   int quantize_grad_;
   int quantize_grad_only_;
-//  int mbits_grad_; 
 };
+
+
 #if 0
 template class QuantEmuOp<CPUDevice, float>; 
 template class QuantEmuOp<CPUDevice, Eigen::half>; 

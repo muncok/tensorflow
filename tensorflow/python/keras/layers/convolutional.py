@@ -186,10 +186,12 @@ class Conv(Layer):
     self.built = True
 
   def call(self, inputs):
+
     if self.data_format == 'channels_first' : 
       inp_channels = inputs.get_shape()[1].value 
     else : 
       inp_channels = inputs.get_shape()[3].value
+
     enable_quantop_input = int(os.getenv('ENABLE_QUANTOP_CONV_INPUTS', 0))
     enable_quantop_output = int(os.getenv('ENABLE_QUANTOP_CONV_OUTPUTS', 0))
     skip_first_layer = int(os.getenv('QUANTEMU_SKIP_FIRST_LAYER', 0))
