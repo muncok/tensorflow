@@ -22,6 +22,7 @@ import copy
 import sys
 import types as python_types
 import warnings
+import os
 
 import numpy as np
 
@@ -958,7 +959,7 @@ class Dense(Layer):
                     quantize_gradients=int(0), 
                     quantize_gradients_only=int(0) ) 
 
-      shape = inputs.get_shape().as_list()
+      shape = inputs_qs.get_shape().as_list()
       if len(shape) > 2:
         # Broadcasting is required for the inputs.
         outputs = standard_ops.tensordot(inputs_qs, kernel_qs, [[len(shape) - 1], [0]])
@@ -969,18 +970,20 @@ class Dense(Layer):
       else:
         outputs = gen_math_ops.mat_mul(inputs_qs, kernel_qs)
 
-    else : 
-    shape = inputs.get_shape().as_list()
-    if len(shape) > 2:
-      # Broadcasting is required for the inputs.
-      outputs = standard_ops.tensordot(inputs, self.kernel, [[len(shape) - 1],
+    else :  # If not quantized 
+      shape = inputs.get_shape().as_list()
+      if len(shape) > 2:
+        # Broadcasting is required for the inputs.
+        outputs = standard_ops.tensordot(inputs, self.kernel, [[len(shape) - 1],
                                                              [0]])
-      # Reshape the output back to the original ndim of the input.
-      if not context.executing_eagerly():
-        output_shape = shape[:-1] + [self.units]
-        outputs.set_shape(output_shape)
-    else:
-      outputs = gen_math_ops.mat_mul(inputs, self.kernel)
+        # Reshape the output back to the original ndim of the input.
+        if not context.executing_eagerly():
+          output_shape = shape[:-1] + [self.units]
+          outputs.set_shape(output_shape)
+      else:
+        outputs = gen_math_ops.mat_mul(inputs, self.kernel)
+    # end quantize loop 
+
     if self.use_bias:
       outputs = nn.bias_add(outputs, self.bias)
     if self.activation is not None:

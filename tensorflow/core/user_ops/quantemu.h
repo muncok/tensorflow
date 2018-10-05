@@ -6,7 +6,7 @@ using namespace tensorflow;
 
 enum ROUND_MODE{NOROUND=0, BIASED, NEAREST};
 enum FGQ_TYPE{NOBLOCK=0, BLOCK_C, BLOCK_CHW };
-enum LPDATA_TYPE{DFP_INT=0, DFP_UINT, TERNARY, BLOCK_FP, LOWP_FP};
+enum LPDATA_TYPE{DFP_INT=1, LOWP_FP, POSIT, BLOCK_FP};
 
 using CPUDevice = Eigen::ThreadPoolDevice;
 using GPUDevice = Eigen::GpuDevice;
@@ -48,6 +48,11 @@ struct BlockFloatQuantEmuFunctor {
   void operator()(const Device& d, int mbits, int rmode, const Tensor in, Tensor out);
 };
 
+template <typename Device, typename T>
+struct PositQuantEmuFunctor {
+  void operator()(const Device& d, int m_bits, int es_bits, int size, const T *in, T *out);
+};
+
 #if GOOGLE_CUDA
 #if 0
 template <typename Eigen::GpuDevice, typename T>
@@ -74,6 +79,5 @@ void LowpFloatQuantEmuFunctor_GPU_launcher (const GPUDevice& d, int mbits, int e
 #endif 
 
 #endif 
-
 
 #endif //_KERNEL_H_

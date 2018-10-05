@@ -2,11 +2,14 @@
 #define EIGEN_USE_GPU
 #include "quantemu.h"
 #include "third_party/eigen3/unsupported/Eigen/CXX11/Tensor"
+//#include "posit_pack.h" 
 
 using namespace tensorflow;
 using GPUDevice = Eigen::GpuDevice;
 
 #define CUBLOCK_SIZE 128 
+
+#include "posit_impl.cu.cc" 
 
 __device__ 
 Eigen::half atomicMaxf(
@@ -259,6 +262,37 @@ void QuantEmuLowpCudaKernel(
   }
 }
 
+__global__ 
+void QuantEmuPositCudaKernel(
+	int m_bits, 
+	int es_bits, 
+	const int size, 
+	const float *in, 
+	float *out) 
+{
+  for (int gid = (blockIdx.x * blockDim.x) + threadIdx.x; gid < size; gid += blockDim.x * gridDim.x) {
+      float inval = in[gid];
+      POSIT_UTYPE pval =_pack_posit(_unpack_float(inval), m_bits, es_bits); 
+      float outval = _pack_float (_unpack_posit(pval, m_bits, es_bits));  
+      out[gid] = outval;
+  }
+}
+
+__global__ 
+void QuantEmuPositCudaKernel(
+	int m_bits, 
+	int es_bits, 
+	const int size, 
+	const Eigen::half *in, 
+	Eigen::half *out) 
+{
+  for (int gid = (blockIdx.x * blockDim.x) + threadIdx.x; gid < size; gid += blockDim.x * gridDim.x) {
+      __half inval = in[gid];
+      POSIT_UTYPE pval =_pack_posit(_unpack_float(__half2float(inval)), m_bits, es_bits); 
+      float outval = _pack_float (_unpack_posit(pval, m_bits, es_bits));  
+      out[gid] = __float2half_rn(outval);
+  }
+}
 
 /* Define the GPU implementation that launches the CUDA kernel. */
 template <typename T>
@@ -394,5 +428,19 @@ struct LowpFloatQuantEmuFunctor <GPUDevice, T> {
 };
 template struct LowpFloatQuantEmuFunctor<GPUDevice, float>;
 template struct LowpFloatQuantEmuFunctor<GPUDevice, Eigen::half>;
+
+template <typename T>
+struct PositQuantEmuFunctor <GPUDevice, T> {
+  void operator()(const GPUDevice& d, int m_bits, int es_bits, int size, const T* in, T* out) {
+    //std::cout << " Inside the PositQuantEmuFunctor GPU version "<< size  << std::endl; 
+    int block = CUBLOCK_SIZE; 
+    int grid = ( size + (CUBLOCK_SIZE-1))/CUBLOCK_SIZE; 
+    QuantEmuPositCudaKernel<<<grid, block, 0, d.stream()>>>(m_bits, es_bits, size, in, out); 
+    //cudaStreamSynchronize(d.stream());
+    //cudaDeviceSynchronize();
+  }
+};
+template struct PositQuantEmuFunctor<GPUDevice, float>;
+template struct PositQuantEmuFunctor<GPUDevice, Eigen::half>;
 
 #endif  // GOOGLE_CUDA
