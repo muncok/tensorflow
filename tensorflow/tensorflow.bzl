@@ -1311,7 +1311,7 @@ def tf_custom_op_library(name, srcs=[], gpu_srcs=[], deps=[], linkopts=[]):
     native.cc_library(
         name=basename + "_gpu",
         srcs=gpu_srcs,
-        copts=_cuda_copts() + if_tensorrt(["-DGOOGLE_TENSORRT=1"]),
+        copts=_cuda_copts() + if_tensorrt(["-DGOOGLE_TENSORRT=1"]) + ["--ftz=true"],
         features = if_cuda(["-use_header_modules"]),
         deps=deps + if_cuda(cuda_deps))
     cuda_deps.extend([":" + basename + "_gpu"])

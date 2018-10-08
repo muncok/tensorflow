@@ -26,7 +26,7 @@ Eigen::half atomicMaxf(
                         __float_as_int(val));
         }
     float fin = __int_as_float(old);
-    return __float2half(fin); 
+    return __float2half_rn (fin); 
 }
 
 __device__ 
@@ -155,7 +155,7 @@ void QuantEmuCudaKernel(
       /* restore sign */
       if(negative) ival = 0 - ival;
 #endif 
-      out[gid] = __float2half (ival * sfdequant);
+      out[gid] = __float2half_rn (ival * sfdequant);
   }
 }
 
@@ -230,7 +230,7 @@ void QuantEmuLowpCudaKernel(
   for (int gid = (blockIdx.x * blockDim.x) + threadIdx.x; gid < size; gid += blockDim.x * gridDim.x) {
       __half_t h; 
       float inval = in[gid];
-      __half  hval = __float2half(inval); 
+      __half  hval = __float2half_rn(inval); 
       h.f = hval;
       h.u = (h.u & lowpfp_mask); 
       float outval = __half2float(h.f);

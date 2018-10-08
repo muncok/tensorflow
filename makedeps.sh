@@ -1,7 +1,7 @@
-pip uninstall /tmp/tensorflow_pkg/tensorflow-1.9.0rc0-cp35-cp35m-linux_x86_64.whl
+#pip uninstall /tmp/tensorflow_pkg/tensorflow-1.9.0rc0-cp35-cp35m-linux_x86_64.whl
  
 bazel build --config=cuda //tensorflow/core/user_ops:quantemu.so
-bazel build --config=cuda //tensorflow/core/user_ops:quantemu_op_py
+#bazel build --config=cuda //tensorflow/core/user_ops:quantemu_op_py
 bazel build --config=cuda //tensorflow/python:quantemu_ops
 bazel build --config=cuda //tensorflow/python/tools:freeze_graph
 bazel build --config=cuda //tensorflow/python:no_contrib
