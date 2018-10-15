@@ -321,7 +321,7 @@ class QuantEmuOp : public OpKernel {
           case BLOCK_C: 
           {
 	    if (data_format_.compare("channels_last")) { 
-	      std::cout << "BLOCK_C blocking mode is not suported on this data format, use NHWC data_format." << std::endl; exit(0); 
+	      std::cout << "BLOCK_C blocking mode is not suported on " << data_format_ << " data format, use NHWC data_format." << std::endl; exit(0); 
             }
             if ( input_tensor.dims() > 4 ) { std::cout << "quantemu_op does not support tensors with more than 4 dimentions" << std::endl; exit (0); }
             int dims[4] = { 1, 1, 1, 1}; 
@@ -341,7 +341,7 @@ class QuantEmuOp : public OpKernel {
           case BLOCK_CHW: 
           {
 	    if (data_format_.compare("channels_first")) { 
-	       std::cout << "BLOCK_CHW blocking mode is not suported on this data format, use NCHW data_format." << std::endl; exit(0); 
+	       std::cout << "BLOCK_CHW blocking mode is not suported on " << data_format_ << " data format, use NCHW data_format." << std::endl; exit(0); 
             }	
             if ( input_tensor.dims() > 4 ) { std::cout << "quantemu_op does not support tensors with more than 4 dimentions" << std::endl; exit (0); }
             int dims[4] = { 1, 1, 1, 1}; 
