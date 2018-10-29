@@ -19,6 +19,7 @@ REGISTER_OP("QuantizeEmu")
     .Attr("data_format: {'unknown', 'channels_first', 'channels_last'}")
     .Attr("allocate_copy: int = 0") 
     .Attr("output_data_type: int = 0")
+    .Attr("output_unsigned: int = 0")
     .Attr("output_precision: int = 23")
     .Attr("output_exponent_bits: int = 5")
     .Attr("channel_blocking_type: int = 0")
@@ -49,7 +50,7 @@ __m256 _mm256_cvtpsph_ps(__m256 reg)
 /* CPU specialization of actual computation. */
 template <typename T>
 struct QuantEmuFunctor<CPUDevice, T> {
-  void operator()(const CPUDevice& d, int mbits, int rmode, int size, const T* in, T* out) {
+  void operator()(const CPUDevice& d, int unsigned_data, int mbits, int rmode, int size, const T* in, T* out) {
 
     //std::cout << " *** Inside the QuantEmuFunctor CPU version "<< size  << std::endl; 
     T absmax = 0.0; 
@@ -57,6 +58,8 @@ struct QuantEmuFunctor<CPUDevice, T> {
     for (int i=0; i < size; i++) if (fabs(in[i]) > absmax) absmax = fabs(in[i]);  
 
     int quant_max = pow(2, mbits-1) - 1;
+    if (unsigned_data == 1) quant_max = pow(2, mbits) - 1;
+
     T sfquant = (T)(quant_max/absmax);
     T sfdequant = (T)1.0/sfquant;
     T sfquant_br = sfquant * 4.0;  /* quantize to nbits + 2, we need them for rounding */
@@ -153,7 +156,7 @@ struct QuantEmuFunctor<CPUDevice, T> {
 /* CPU specialization of actual computation. */
 template <typename T>
 struct BlockC_QuantEmuFunctor<CPUDevice, T> {
-  void operator()(const CPUDevice& d, int mbits, int *dims, int block_size, int rmode, const T *in, T *out) {
+  void operator()(const CPUDevice& d, int unsigned_data, int mbits, int *dims, int block_size, int rmode, const T *in, T *out) {
 
     const T *input_flat = in; 
     T *output_flat = out; 
@@ -172,6 +175,7 @@ struct BlockC_QuantEmuFunctor<CPUDevice, T> {
 
             QuantEmuFunctor<CPUDevice, T>()(
                 d,
+                unsigned_data,
                 mbits, 	
 	        rmode,
                 block_size,  
@@ -186,7 +190,7 @@ struct BlockC_QuantEmuFunctor<CPUDevice, T> {
 
 template <typename T>
 struct BlockCHW_QuantEmuFunctor<CPUDevice, T> {
-  void operator()(const CPUDevice& d, int mbits, int *dims, int cblock, int rmode, const T *in, T *out) {
+  void operator()(const CPUDevice& d, int unsigned_data, int mbits, int *dims, int cblock, int rmode, const T *in, T *out) {
 
     int chw_blocks =  dims[1]/cblock; 
     if ((dims[1]%cblock) || (dims[1] < cblock)) { chw_blocks = 1; cblock = dims[1];}
@@ -204,6 +208,7 @@ struct BlockCHW_QuantEmuFunctor<CPUDevice, T> {
 
         QuantEmuFunctor<CPUDevice, T>()(
                 d,
+                unsigned_data,
                 mbits, 	
 	        rmode,
                 block_size,  
@@ -259,6 +264,7 @@ class QuantEmuOp : public OpKernel {
     OP_REQUIRES_OK(context, context->GetAttr("data_format", &data_format_));
     OP_REQUIRES_OK(context, context->GetAttr("allocate_copy", &allocate_copy_));
     OP_REQUIRES_OK(context, context->GetAttr("output_data_type", &lpdata_type_));
+    OP_REQUIRES_OK(context, context->GetAttr("output_unsigned", &unsigned_data_));
     OP_REQUIRES_OK(context, context->GetAttr("output_precision", &mbits_));
     OP_REQUIRES_OK(context, context->GetAttr("output_exponent_bits", &exponent_bits_));
     OP_REQUIRES_OK(context, context->GetAttr("channel_blocking_type", &block_type_));
@@ -310,6 +316,7 @@ class QuantEmuOp : public OpKernel {
           { 
             QuantEmuFunctor<Device, T>()(
               context->eigen_device<Device>(),
+              unsigned_data_,
               mbits, 	
 	      round_mode_,
               static_cast<int>(input_tensor.NumElements()),
@@ -329,6 +336,7 @@ class QuantEmuOp : public OpKernel {
 
             BlockC_QuantEmuFunctor<Device, T>()(
 	      context->eigen_device<Device>(), 
+              unsigned_data_,
 	      mbits, 
 	      dims, 
               block_size_, 
@@ -350,6 +358,7 @@ class QuantEmuOp : public OpKernel {
 
             BlockCHW_QuantEmuFunctor<Device, T>()(
 	      context->eigen_device<Device>(), 
+              unsigned_data_,
 	      mbits, 
 	      dims,
               block_size_, 
@@ -394,6 +403,7 @@ class QuantEmuOp : public OpKernel {
   string data_format_;
   int allocate_copy_;
   int lpdata_type_;
+  int unsigned_data_;
   int mbits_;
   int exponent_bits_;
   int block_type_;   

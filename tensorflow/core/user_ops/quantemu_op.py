@@ -31,20 +31,9 @@ def quantize_emu(input, data_format='channels_last', allocate_copy=0, output_dat
 
 @ops.RegisterGradient("QuantizeEmu")
 def _quantize_emu_grad(op, grad):
-  if op.get_attr("data_format") is 'channels_first' : 
-    inp_channels = grad.get_shape()[1].value 
-  else : 
-    inp_channels = grad.get_shape()[3].value
-  skip_first_layer = int(os.getenv('QUANTEMU_SKIP_FIRST_LAYER', 0))
-
-  quantize_gradients = op.get_attr("quantize_gradients")
-  if quantize_gradients is 1 : 
-    if skip_first_layer is 1 and inp_channels is 3 :
-      return [grad]
-    else :
-      #_quantemu_module = tf.load_op_library(os.path.join(tf.resource_loader.get_data_files_path(), 'quantemu.so'))
-      _quantemu_module = tf.load_op_library(os.path.join(tf.resource_loader.get_root_dir_with_all_resources(), '../../core/user_ops/quantemu.so'))
-      return [_quantemu_module.quantize_emu(
+  if op.get_attr("quantize_gradients") is 1 : 
+    _quantemu_module = tf.load_op_library(os.path.join(tf.resource_loader.get_root_dir_with_all_resources(), '../../core/user_ops/quantemu.so'))
+    return [_quantemu_module.quantize_emu(
 		grad, 
 		data_format=op.get_attr("data_format"), 
 		allocate_copy=int(os.getenv('QUANTEMU_ALLOCATE_COPY_GRAD', 0)), 

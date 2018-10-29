@@ -109,6 +109,7 @@ void max_reduce(
 
 __global__ 
 void QuantEmuCudaKernel(
+	int unsigned_data, 
 	int mbits, 
 	Eigen::half *absmax, 
 	int rmode, 
@@ -123,6 +124,7 @@ void QuantEmuCudaKernel(
   float sfquant_br; 
 
   quant_max = pow(2, mbits-1) - 1;
+  if (unsigned_data) quant_max = pow(2, mbits) - 1;
   //quant_max = (int)((0x1 << (mbits-1)) - 1);
   sfquant = (float)(quant_max / __half2float(*absmax));
   sfdequant = (float)1.0/sfquant;
@@ -161,6 +163,7 @@ void QuantEmuCudaKernel(
 
 __global__ 
 void QuantEmuCudaKernel(
+        int unsigned_data, 
 	int mbits, 
 	float *absmax, 
 	int rmode, 
@@ -174,6 +177,8 @@ void QuantEmuCudaKernel(
   float sfquant_br; 
 
   quant_max = pow(2, mbits-1) - 1;
+  if (unsigned_data == 1) quant_max = pow(2, mbits) - 1;
+
   //quant_max = (int)((0x1 << (mbits-1)) - 1);
   sfquant = (float)(quant_max / *absmax);
   sfdequant = (float)1.0/sfquant;
@@ -297,7 +302,7 @@ void QuantEmuPositCudaKernel(
 /* Define the GPU implementation that launches the CUDA kernel. */
 template <typename T>
 struct QuantEmuFunctor<GPUDevice, T> { 
-  void operator()(const GPUDevice& d, int mbits, int rmode, int size, const T* in, T* out) {
+  void operator()(const GPUDevice& d, int unsigned_data, int mbits, int rmode, int size, const T* in, T* out) {
     //std::cout << " Inside the QuantEmuFunctor GPU version: mbits : " << mbits << ", tensor_size :" << size  << std::endl; 
     int block = CUBLOCK_SIZE; 
     int grid = (size + (CUBLOCK_SIZE -1))/CUBLOCK_SIZE;  
@@ -308,7 +313,7 @@ struct QuantEmuFunctor<GPUDevice, T> {
     max_reduce<<<grid, block, 0, d.stream()>>>(in, d_absmax, 0, size); 
     //cudaStreamSynchronize(d.stream());
     //cudaMemcpy(&absmax, d_absmax, sizeof(T), cudaMemcpyDeviceToHost); 
-    QuantEmuCudaKernel <<<grid, block, 0, d.stream()>>>(mbits, d_absmax, rmode, 0, size, in, out);
+    QuantEmuCudaKernel <<<grid, block, 0, d.stream()>>>(unsigned_data, mbits, d_absmax, rmode, 0, size, in, out);
     //cudaStreamSynchronize(d.stream());
     cudaFree(d_absmax);
   }
@@ -318,7 +323,7 @@ template struct QuantEmuFunctor<GPUDevice, Eigen::half>;
 
 template <typename T>
 struct BlockC_QuantEmuFunctor<GPUDevice, T> {
-  void operator()(const GPUDevice& d, int mbits, int *dims , int block_size, int rmode, const T *in, T *out) {
+  void operator()(const GPUDevice& d, int unsigned_data, int mbits, int *dims , int block_size, int rmode, const T *in, T *out) {
     //std::cout << " Inside the BlockCQuantEmuFunctorGPU version, block_size: " << block_size << std::endl; 
 
     int c_blocks =  dims[3]/block_size; 
@@ -347,6 +352,7 @@ struct BlockC_QuantEmuFunctor<GPUDevice, T> {
           max_reduce<<<grid, block, 0, streams[k]>>>(input_flat, &d_absmax[k], block_offset, block_size); 
           //cudaStreamSynchronize(streams[k]);
           QuantEmuCudaKernel <<<grid, block, 0, streams[k]>>>(
+					unsigned_data, 
 					mbits, 
 					&d_absmax[k], 
 					rmode, 
@@ -368,7 +374,7 @@ template struct BlockC_QuantEmuFunctor<GPUDevice, Eigen::half>;
 
 template <typename T>
 struct BlockCHW_QuantEmuFunctor<GPUDevice, T> {
-  void operator()(const GPUDevice& d, int mbits, int *dims, int cblock_size, int rmode, const T *in, T *out) {
+  void operator()(const GPUDevice& d, int unsigned_data, int mbits, int *dims, int cblock_size, int rmode, const T *in, T *out) {
     //std::cout << " Inside the BlockQuantEmuFunctorGPU version " << std::endl; 
 
     int chw_blocks =  dims[1]/cblock_size; 
@@ -396,6 +402,7 @@ struct BlockCHW_QuantEmuFunctor<GPUDevice, T> {
           max_reduce<<<grid, block, 0, streams[k]>>>(input_flat, &d_absmax[k], block_offset, block_size); 
           //cudaStreamSynchronize(streams[k]);
           QuantEmuCudaKernel <<<grid, block, 0, streams[k]>>>(
+					unsigned_data, 
 					mbits, 
 					&d_absmax[k], 
 					rmode, 

@@ -124,6 +124,10 @@ def _FoldFusedBatchNorms(graph, is_training, freeze_batch_norm_delay):
           match.layer_op, match.input_tensor, scaled_weight_tensor,
           match.batch_to_space_op)
 
+      # Naveen added NCHW support 
+      if match.layer_op.get_attr('data_format') == b'NCHW' : 
+        new_layer_tensor = tf.transpose(new_layer_tensor, [0, 2, 3, 1])
+
       if correction_recip is not None:
         new_layer_tensor = math_ops.multiply(
             correction_recip, new_layer_tensor, name='post_conv_mul')
@@ -132,6 +136,10 @@ def _FoldFusedBatchNorms(graph, is_training, freeze_batch_norm_delay):
 
       bias_add_tensor = math_ops.add(
           new_layer_tensor, bias_tensor, name='add_fold')
+
+      # Naveen added NCHW support 
+      if match.layer_op.get_attr('data_format') == b'NCHW' : 
+        bias_add_tensor = tf.transpose(bias_add_tensor, [0, 3, 1, 2])
 
       nodes_modified_count = graph_editor.reroute_ts(bias_add_tensor,
                                                      match.output_tensor)
@@ -448,8 +456,20 @@ def _FoldFusedBatchNormGrad(op, unused_grad_y, grad_mean, grad_var, unused_1,
   n = math_ops.cast(
       array_ops.size(x) / array_ops.size(grad_mean), dtypes.float32)
   dmean_dx = grad_mean / n
+
+  # Naveen added NCHW support 
+  if op.get_attr('data_format') == b'NCHW' : 
+    x = tf.transpose(x, [0, 2, 3, 1])
+
   dvar_dx = 2 * grad_var * (x - op.outputs[1]) / (n - 1)
-  return (dmean_dx + dvar_dx), None, None, None, None
+  dvarsum = (dmean_dx + dvar_dx)
+
+  # Naveen added NCHW support 
+  if op.get_attr('data_format') == b'NCHW' : 
+    dvarsum = tf.transpose(dvarsum, [0, 3, 1, 2])
+
+#  return (dmean_dx + dvar_dx), None, None, None, None
+  return (dvarsum), None, None, None, None
 
 
 def _FoldUnfusedBatchNorms(graph, is_training, freeze_batch_norm_delay):
