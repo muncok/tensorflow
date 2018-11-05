@@ -7,9 +7,27 @@
 using namespace tensorflow;
 using GPUDevice = Eigen::GpuDevice;
 
-#define CUBLOCK_SIZE 128 
+#define CUBLOCK_SIZE 32 
 
 #include "posit_impl.cu.cc" 
+
+__device__ 
+Eigen::half atomicMinf(
+	Eigen::half *address_half, 
+	float val)
+{
+    float address = __half2float (*address_half);
+
+    int *address_as_int =(int*)&address;
+    int old = *address_as_int, assumed;
+    while (val < __int_as_float(old)) {
+        assumed = old;
+        old = atomicCAS(address_as_int, assumed,
+                        __float_as_int(val));
+        }
+    float fin = __int_as_float(old);
+    return __float2half_rn (fin); 
+}
 
 __device__ 
 Eigen::half atomicMaxf(
@@ -27,6 +45,21 @@ Eigen::half atomicMaxf(
         }
     float fin = __int_as_float(old);
     return __float2half_rn (fin); 
+}
+
+__device__ 
+float atomicMinf(
+	float* address, 
+	float val)
+{
+    int *address_as_int =(int*)address;
+    int old = *address_as_int, assumed;
+    while (val < __int_as_float(old)) {
+        assumed = old;
+        old = atomicCAS(address_as_int, assumed,
+                        __float_as_int(val));
+        }
+    return __int_as_float(old);
 }
 
 __device__ 
@@ -52,7 +85,8 @@ void max_reduce(
 	const int block_offset, 
 	const int block_size)
 {
-    volatile __shared__ float shared[CUBLOCK_SIZE]; 
+    //volatile __shared__ float shared[CUBLOCK_SIZE]; 
+    extern __shared__ float shared[]; 
 
     int tid = threadIdx.x;
     int gid = (blockDim.x * blockIdx.x) + tid + block_offset; 
@@ -83,7 +117,8 @@ void max_reduce(
 	const int block_offset, 
 	const int block_size)
 {
-    volatile __shared__ float shared[CUBLOCK_SIZE]; 
+    //volatile __shared__ float shared[CUBLOCK_SIZE]; 
+    extern __shared__ float shared[]; 
 
     int tid = threadIdx.x;
     int gid = (blockDim.x * blockIdx.x) + tid + block_offset; 
@@ -105,6 +140,222 @@ void max_reduce(
 
     if (tid == 0)
       atomicMaxf(d_max, shared[0]);
+}
+
+__global__ 
+void min_max_reduce(
+	const Eigen::half* 
+	const d_array, 
+	Eigen::half *d_min, 
+	Eigen::half *d_max, 
+	const int block_offset, 
+	const int block_size)
+{
+    __shared__ float shared[3*CUBLOCK_SIZE]; 
+    volatile float *shared_max = &shared[0]; 
+    volatile float *shared_min = &shared[CUBLOCK_SIZE]; 
+
+    int tid = threadIdx.x;
+    int gid = (blockDim.x * blockIdx.x) + tid + block_offset; 
+    shared_max[tid] = 0; 
+    shared_min[tid] = 0; 
+    size_t elements = block_offset+ block_size; 
+
+    while (gid < elements) {
+        shared_max[tid] = fmaxf(shared_max[tid], __half2float(d_array[gid]));
+        shared_min[tid] = fminf(shared_min[tid], __half2float(d_array[gid]));
+        gid += gridDim.x*blockDim.x;
+        }
+    __syncthreads();
+    gid = (blockDim.x * blockIdx.x) + tid + block_offset;  // 1
+    for (unsigned int s=blockDim.x/2; s>0; s>>=1) 
+    {
+        if (tid < s && gid < elements)
+            shared_max[tid] = fmaxf(shared_max[tid], shared_max[tid + s]);
+            shared_min[tid] = fminf(shared_min[tid], shared_min[tid + s]);
+        __syncthreads();
+    }
+
+    if (tid == 0) {
+      atomicMaxf(d_max, shared_max[0]);
+      atomicMinf(d_min, shared_min[0]);
+    }
+}
+
+__global__ 
+void min_max_reduce(
+	const float* const d_array, 
+	float* d_min, 
+	float* d_max, 
+	const int block_offset, 
+	const int block_size)
+{
+    __shared__ float shared[3*CUBLOCK_SIZE]; 
+    volatile float *shared_max = &shared[0]; 
+    volatile float *shared_min = &shared[CUBLOCK_SIZE]; 
+
+    int tid = threadIdx.x;
+    int gid = (blockDim.x * blockIdx.x) + tid + block_offset; 
+    shared_max[tid] = 0; 
+    size_t elements = block_offset+ block_size; 
+
+    while (gid < elements) {
+        shared_max[tid] = fmaxf(shared_max[tid], d_array[gid]);
+        shared_min[tid] = fminf(shared_min[tid], d_array[gid]);
+        gid += gridDim.x*blockDim.x;
+    }
+    __syncthreads();
+    gid = (blockDim.x * blockIdx.x) + tid + block_offset;  // 1
+    for (unsigned int s=blockDim.x/2; s>0; s>>=1) 
+    {
+        if (tid < s && gid < elements)
+            shared_max[tid] = fmaxf(shared_max[tid], shared_max[tid + s]);
+            shared_min[tid] = fminf(shared_min[tid], shared_min[tid + s]);
+        __syncthreads();
+    }
+
+    if (tid == 0) {
+      atomicMaxf(d_max, shared_max[0]);
+      atomicMinf(d_min, shared_min[0]);
+    }
+}
+
+__global__ 
+void reduce_interquartile_sum (
+	const float* const d_array, 
+	float *d_sum, 
+	float *d_min, 
+	float *d_max, 
+	const int block_offset, 
+	const int block_size)
+{
+    volatile __shared__ float shared[2*CUBLOCK_SIZE]; 
+
+    int tid = threadIdx.x;
+    int gid = (blockDim.x * blockIdx.x) + tid + block_offset; 
+    shared[tid] = 0; 
+
+    size_t elements = block_offset+ block_size; 
+    /* interquanrtile region is between 25% and 75% of the probability distribution */ 
+    float iqmax = *d_max * (float) 0.75; 
+    float iqmin = *d_min * (float) 0.75; 
+
+    while (gid < elements) {
+        shared[tid] += (d_array[gid] < iqmax && d_array[gid] > iqmin) ? d_array[gid] : 0;
+        gid += gridDim.x*blockDim.x;
+    }
+    __syncthreads();
+    gid = (blockDim.x * blockIdx.x) + tid + block_offset;  // 1
+    for (unsigned int s=blockDim.x/2; s>0; s>>=1) 
+    {
+        if (tid < s && gid < elements)
+            shared[tid] += shared[tid + s];
+        __syncthreads();
+    }
+
+    if (tid == 0) {
+//      atomicAdd(d_sum, shared[0]);
+    }
+}
+
+__global__ 
+void reduce_interquartile_sum(
+	const Eigen::half* const d_array, 
+	float *d_sum, 
+	Eigen::half *d_min, 
+	Eigen::half *d_max, 
+	const int block_offset, 
+	const int block_size)
+{
+    volatile __shared__ float shared[2*CUBLOCK_SIZE]; 
+
+    int tid = threadIdx.x;
+    int gid = (blockDim.x * blockIdx.x) + tid + block_offset; 
+    shared[tid] = 0; 
+    size_t elements = block_offset+ block_size; 
+    /* interquanrtile region is between 25% and 75% of the probability distribution */ 
+    Eigen::half iqmax = *d_max * (Eigen::half) 0.75; 
+    Eigen::half iqmin = *d_min * (Eigen::half) 0.75; 
+
+    while (gid < elements) {
+        shared[tid] += (d_array[gid] < iqmax && d_array[gid] > iqmin) ? __half2float(d_array[gid]) : 0;
+        gid += gridDim.x*blockDim.x;
+        }
+    __syncthreads();
+    gid = (blockDim.x * blockIdx.x) + tid + block_offset;  // 1
+    for (unsigned int s=blockDim.x/2; s>0; s>>=1) 
+    {
+        if (tid < s && gid < elements)
+            shared[tid] += shared[tid + s];
+        __syncthreads();
+    }
+
+    if (tid == 0) {
+      atomicAdd(d_sum, shared[0]);
+    }
+}
+
+__global__ 
+void estimate_mode_range (
+        float *d_absmax, 
+        float *d_sum, 
+   	float *d_min, 
+	float *d_max, 
+	int block_size) 
+{
+    float ninty_perc = (float)0.9f; 
+    float seventy_perc = (float)0.7f; 
+
+    __syncthreads();
+
+    float iq_mean = *d_sum /(float)block_size;  
+    if (threadIdx.x == 0)
+    { 
+      	if (*d_min < (float)0.0 && *d_max > (float)0.0) {
+        	/* uniform distribution */  
+           if ((fabsf(*d_min) - iq_mean) < (fabsf(*d_max) - iq_mean)) *d_absmax = (float)0.9*fabsf(*d_min);  
+           else *d_absmax = (float)0.9*fabsf(*d_max);
+      	} else if (*d_min < (float)0.0 && *d_max < (float)0.0) {
+           if ((fabsf(*d_min) - iq_mean) < (fabsf(*d_max) - iq_mean)) *d_absmax = (float)0.9*fabsf(*d_min);  
+           else *d_absmax = (float)0.7*fabsf(*d_min);
+      	} else if (*d_min > (float)0.0 && *d_max > (float)0.0) {
+           if ((fabsf(*d_min) - iq_mean) < (fabsf(*d_max) - iq_mean)) *d_absmax = (float)0.7*fabsf(*d_max);  
+           else *d_absmax = (float)0.9*fabsf(*d_max);
+      	} 
+    }
+}
+
+__global__ 
+void estimate_mode_range (
+        Eigen::half *d_absmax, 
+        float *d_sum, 
+   	Eigen::half *d_hmin, 
+	Eigen::half *d_hmax, 
+	int block_size) 
+{
+    float ninty_perc = (float)0.9f; 
+    float seventy_perc = (float)0.7f; 
+
+    __syncthreads();
+
+    float iq_mean = *d_sum /(float)block_size;  
+    float d_min = __half2float(*d_hmin); 
+    float d_max = __half2float(*d_hmax); 
+
+    if (threadIdx.x == 0)
+    { 
+      	if (d_min < (float)0.0 && d_max > (float)0.0) {
+        	/* uniform distribution */  
+           if ((fabsf(d_min) - iq_mean) < (fabsf(d_max) - iq_mean)) *d_absmax = __float2half_rn((float)0.9*fabsf(d_min));  
+           else *d_absmax = __float2half_rn((float)0.9*fabsf(d_max));
+      	} else if (d_min < (float)0.0 && d_max < (float)0.0) {
+           if ((fabsf(d_min) - iq_mean) < (fabsf(d_max) - iq_mean)) *d_absmax = __float2half_rn((float)0.9*fabsf(d_min));  
+           else *d_absmax = __float2half_rn((float)0.7*fabsf(d_min));
+      	} else if (d_min > (float)0.0 && d_max > (float)0.0) {
+           if ((fabsf(d_min) - iq_mean) < (fabsf(d_max) - iq_mean)) *d_absmax = __float2half_rn((float)0.7*fabsf(d_max));  
+           else *d_absmax = __float2half_rn((float)0.9*fabsf(d_max));
+      	} 
+    }
 }
 
 __global__ 
@@ -133,14 +384,14 @@ void QuantEmuCudaKernel(
   int tid = threadIdx.x;
   int gid = (blockDim.x * blockIdx.x) + tid + block_offset;
   int size = block_offset + block_size; 
-  float fabsmax = __half2float(*absmax); 
+  float fabsfmax = __half2float(*absmax); 
  
   for (int gid = (blockIdx.x * blockDim.x) + threadIdx.x + block_offset; gid < size; gid += blockDim.x * gridDim.x) {
 //  for (gid; gid < size; gid += blockDim.x*gridDim.x) {
       float inval = __half2float(in[gid]);
       /* saturate anything larger than fmax_val to fmax_val */
-      //fminf (inval, fabsmax); 
-      //fmaxf (inval, -fabsmax);
+      fminf (inval, fabsfmax); 
+      fmaxf (inval, -fabsfmax);
       //int ival = (int)(inval * sfquant);
       /* round to nearest even */ 
       int ival = __half2int_rn (inval * sfquant);
@@ -187,14 +438,14 @@ void QuantEmuCudaKernel(
   int tid = threadIdx.x;
   int gid = (blockDim.x * blockIdx.x) + tid + block_offset;
   int size = block_offset + block_size; 
-  float fabsmax = *absmax; 
+  float fabsfmax = *absmax; 
  
   for (int gid = (blockIdx.x * blockDim.x) + threadIdx.x + block_offset; gid < size; gid += blockDim.x * gridDim.x) {
   //for (gid; gid < size; gid += blockDim.x*gridDim.x) {
       float inval = in[gid];
       /* saturate anything larger than fmax_val to fmax_val */
-      fminf (inval, fabsmax); 
-      fmaxf (inval, -fabsmax);
+      fminf (inval, fabsfmax); 
+      fmaxf (inval, -fabsfmax);
       /* round to the nearest even */ 
       int ival = __float2int_rn (inval * sfquant);
 #if 0
@@ -307,15 +558,33 @@ struct QuantEmuFunctor<GPUDevice, T> {
     int block = CUBLOCK_SIZE; 
     int grid = (size + (CUBLOCK_SIZE -1))/CUBLOCK_SIZE;  
     T *d_absmax;
-    T absmax; 
+    T *d_min;
+    T *d_max;
+    float *d_sum;
     cudaMalloc((void**) &d_absmax, sizeof(T));
+    cudaMalloc((void**) &d_min, sizeof(T));
+    cudaMalloc((void**) &d_max, sizeof(T));
+    cudaMalloc((void**) &d_sum, sizeof(float));
+
     cudaMemset(&d_absmax, 0, sizeof(T));
-    max_reduce<<<grid, block, 0, d.stream()>>>(in, d_absmax, 0, size); 
+    cudaMemset(&d_min, 0, sizeof(T));
+    cudaMemset(&d_max, 0, sizeof(T));
+    cudaMemset(&d_sum, 0, sizeof(float));
+#if 0
+    max_reduce<<<grid, block, block*sizeof(float), d.stream()>>>(in, d_absmax, 0, size); 
+#else 
+    min_max_reduce<<<grid, block, 0, d.stream()>>>(in, d_min, d_max, 0, size); 
+    reduce_interquartile_sum<<<grid, block, 0, d.stream()>>>(in, d_sum, d_min, d_max, 0, size); 
+    estimate_mode_range <<<grid, block, 0, d.stream()>>>(d_absmax, d_sum, d_min, d_max, size);
+#endif 
     //cudaStreamSynchronize(d.stream());
     //cudaMemcpy(&absmax, d_absmax, sizeof(T), cudaMemcpyDeviceToHost); 
     QuantEmuCudaKernel <<<grid, block, 0, d.stream()>>>(unsigned_data, mbits, d_absmax, rmode, 0, size, in, out);
     //cudaStreamSynchronize(d.stream());
     cudaFree(d_absmax);
+    cudaFree(d_min);
+    cudaFree(d_max);
+    cudaFree(d_sum);
   }
 };
 template struct QuantEmuFunctor<GPUDevice, float>;
@@ -338,8 +607,15 @@ struct BlockC_QuantEmuFunctor<GPUDevice, T> {
     const int num_streams = num_cblocks;  
     cudaStream_t streams[num_streams];
     T *d_absmax;
+    T *d_min;
+    T *d_max;
+    float *d_sum;
+
     cudaMalloc((void**) &d_absmax, num_streams*sizeof(T));
-    
+    cudaMalloc((void**) &d_min, num_streams*sizeof(T));
+    cudaMalloc((void**) &d_max, num_streams*sizeof(T));
+    cudaMalloc((void**) &d_sum, num_streams*sizeof(float));
+   
     for (int s =0; s < num_streams; s++ ) cudaStreamCreate(&streams[s]);
 
     for (int cb = 0; cb < num_cblocks; cb+=num_streams) {
@@ -349,7 +625,16 @@ struct BlockC_QuantEmuFunctor<GPUDevice, T> {
           int tensor_offset = (cb+k)*dims[3]; 
           const int block_offset = tensor_offset + d3*block_size; 
           cudaMemset(&d_absmax[k], 0, sizeof(T));
-          max_reduce<<<grid, block, 0, streams[k]>>>(input_flat, &d_absmax[k], block_offset, block_size); 
+          cudaMemset(&d_min[k], 0, sizeof(T));
+          cudaMemset(&d_max[k], 0, sizeof(T));
+          cudaMemset(&d_sum[k], 0, sizeof(float));
+#if 0
+          max_reduce<<<grid, block, block*sizeof(float), streams[k]>>>(input_flat, &d_absmax[k], block_offset, block_size); 
+#else 
+          min_max_reduce<<<grid, block, 0, streams[k]>>>(input_flat, &d_min[k], &d_max[k], block_offset, block_size); 
+          reduce_interquartile_sum<<<grid, block, 0, streams[k]>>>(input_flat, &d_sum[k], &d_min[k], &d_max[k], block_offset, block_size); 
+	  estimate_mode_range <<<grid, block, 0, streams[k]>>>(&d_absmax[k], &d_sum[k], &d_min[k], &d_max[k], block_size);
+#endif 
           //cudaStreamSynchronize(streams[k]);
           QuantEmuCudaKernel <<<grid, block, 0, streams[k]>>>(
 					unsigned_data, 
@@ -367,6 +652,9 @@ struct BlockC_QuantEmuFunctor<GPUDevice, T> {
     //cudaDeviceSynchronize();
     for (int s =0; s < num_streams; s++ ) cudaStreamDestroy(streams[s]);
     cudaFree(d_absmax);
+    cudaFree(d_min);
+    cudaFree(d_max);
+    cudaFree(d_sum);
   }
 };
 template struct BlockC_QuantEmuFunctor<GPUDevice, float>;
@@ -389,7 +677,15 @@ struct BlockCHW_QuantEmuFunctor<GPUDevice, T> {
     const int num_streams = dims[0];  
     cudaStream_t streams[num_streams];
     T *d_absmax;
+    T *d_min;
+    T *d_max;
+    float *d_sum;
+
     cudaMalloc((void**) &d_absmax, num_streams*sizeof(T));
+    cudaMalloc((void**) &d_min, num_streams*sizeof(T));
+    cudaMalloc((void**) &d_max, num_streams*sizeof(T));
+    cudaMalloc((void**) &d_sum, num_streams*sizeof(float));
+
     for (int s =0; s < num_streams; s++ ) cudaStreamCreate(&streams[s]);
 
     for (int d0 = 0; d0 < dims[0]; d0+=num_streams) {
@@ -399,8 +695,16 @@ struct BlockCHW_QuantEmuFunctor<GPUDevice, T> {
           int tensor_offset  = (d0+k)*dims[1]*dims[2]*dims[3];  
           int block_offset = tensor_offset + d1*block_size; 
           cudaMemset(&d_absmax[k], 0, sizeof(T));
-          max_reduce<<<grid, block, 0, streams[k]>>>(input_flat, &d_absmax[k], block_offset, block_size); 
-          //cudaStreamSynchronize(streams[k]);
+          cudaMemset(&d_min[k], 0, sizeof(T));
+          cudaMemset(&d_max[k], 0, sizeof(T));
+          cudaMemset(&d_sum[k], 0, sizeof(float));
+#if 0
+          max_reduce<<<grid, block, block*sizeof(float), streams[k]>>>(input_flat, &d_absmax[k], block_offset, block_size); 
+#else 
+          min_max_reduce<<<grid, block, 0, streams[k]>>>(input_flat, &d_min[k], &d_max[k], block_offset, block_size); 
+          reduce_interquartile_sum<<<grid, block, 0, streams[k]>>>(input_flat, &d_sum[k], &d_min[k], &d_max[k], block_offset, block_size); 
+	  estimate_mode_range <<<grid, block, 0, streams[k]>>>(&d_absmax[k], &d_sum[k], &d_min[k], &d_max[k], block_size);
+#endif 
           QuantEmuCudaKernel <<<grid, block, 0, streams[k]>>>(
 					unsigned_data, 
 					mbits, 
@@ -417,6 +721,9 @@ struct BlockCHW_QuantEmuFunctor<GPUDevice, T> {
     //cudaDeviceSynchronize();
     for (int s =0; s < num_streams; s++ ) cudaStreamDestroy(streams[s]);
     cudaFree(d_absmax);
+    cudaFree(d_min);
+    cudaFree(d_max);
+    cudaFree(d_sum);
   }
 };
 template struct BlockCHW_QuantEmuFunctor<GPUDevice, float>;
