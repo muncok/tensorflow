@@ -756,7 +756,7 @@ struct BlockCHW_QuantEmuFunctor<GPUDevice, T> {
           cudaStreamSynchronize(streams[k]);
         }
       }
-      cudaDeviceSynchronize();
+//      cudaDeviceSynchronize();
     }
     for (int s =0; s < num_streams; s++ ) cudaStreamDestroy(streams[s]);
     cudaFree(d_absmax);
