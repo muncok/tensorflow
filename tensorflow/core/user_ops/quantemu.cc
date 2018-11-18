@@ -19,6 +19,7 @@ REGISTER_OP("QuantizeEmu")
     .Attr("data_format: {'unknown', 'channels_first', 'channels_last'}")
     .Attr("allocate_copy: int = 0") 
     .Attr("output_data_type: int = 0")
+    .Attr("pruning_algo: int = 0")
     .Attr("output_unsigned: int = 0")
     .Attr("output_precision: int = 23")
     .Attr("output_exponent_bits: int = 5")
@@ -50,7 +51,7 @@ __m256 _mm256_cvtpsph_ps(__m256 reg)
 /* CPU specialization of actual computation. */
 template <typename T>
 struct QuantEmuFunctor<CPUDevice, T> {
-  void operator()(const CPUDevice& d, int unsigned_data, int mbits, int rmode, int size, const T* in, T* out) {
+  void operator()(const CPUDevice& d, int pruning_algo, int unsigned_data, int mbits, int rmode, int size, T* in, T* out) {
 
     //std::cout << " *** Inside the QuantEmuFunctor CPU version "<< size  << std::endl; 
     T absmax = 0.0; 
@@ -156,9 +157,10 @@ struct QuantEmuFunctor<CPUDevice, T> {
 /* CPU specialization of actual computation. */
 template <typename T>
 struct BlockC_QuantEmuFunctor<CPUDevice, T> {
-  void operator()(const CPUDevice& d, int unsigned_data, int mbits, int *dims, int block_size, int rmode, const T *in, T *out) {
+  void operator()(const CPUDevice& d, int pruning_algo, int unsigned_data, int mbits, int *dims, 
+	int block_size, int rmode, T *in, T *out) {
 
-    const T *input_flat = in; 
+    T *input_flat = in; 
     T *output_flat = out; 
 
     int c_blocks =  dims[3]/block_size; 
@@ -170,11 +172,12 @@ struct BlockC_QuantEmuFunctor<CPUDevice, T> {
           for (int d3 = 0; d3 < c_blocks; d3++) {
 	    int tensor_offset = d0*dims[1]*dims[2]*dims[3] + d1*dims[2]*dims[3] + d2*dims[3]; 
             int block_offset = d3*block_size; 
-  	    const T *input_block = &input_flat[tensor_offset + block_offset]; 
+  	    T *input_block = &input_flat[tensor_offset + block_offset]; 
   	    T *output_block = &output_flat[tensor_offset + block_offset]; 
 
             QuantEmuFunctor<CPUDevice, T>()(
                 d,
+                pruning_algo,
                 unsigned_data,
                 mbits, 	
 	        rmode,
@@ -190,24 +193,26 @@ struct BlockC_QuantEmuFunctor<CPUDevice, T> {
 
 template <typename T>
 struct BlockCHW_QuantEmuFunctor<CPUDevice, T> {
-  void operator()(const CPUDevice& d, int unsigned_data, int mbits, int *dims, int cblock, int rmode, const T *in, T *out) {
+  void operator()(const CPUDevice& d, int pruning_algo, int unsigned_data, int mbits, int *dims, 
+		int cblock, int rmode, T *in, T *out) {
 
     int chw_blocks =  dims[1]/cblock; 
     if ((dims[1]%cblock) || (dims[1] < cblock)) { chw_blocks = 1; cblock = dims[1];}
     int block_size = cblock*dims[2]*dims[3];
 
-    const T *input_flat = in; 
+    T *input_flat = in; 
     T *output_flat = out; 
 
     for (int d0 = 0; d0 < dims[0]; d0++) {
       for (int d1 = 0; d1 < chw_blocks; d1++) {
 	int tensor_offset = d0*dims[1]*dims[2]*dims[3];
         int block_offset = d1*block_size; 
-  	const T *input_block = &input_flat[tensor_offset + block_offset]; 
+  	T *input_block = &input_flat[tensor_offset + block_offset]; 
   	T *output_block = &output_flat[tensor_offset + block_offset]; 
 
         QuantEmuFunctor<CPUDevice, T>()(
                 d,
+          	pruning_algo,
                 unsigned_data,
                 mbits, 	
 	        rmode,
@@ -264,6 +269,7 @@ class QuantEmuOp : public OpKernel {
     OP_REQUIRES_OK(context, context->GetAttr("data_format", &data_format_));
     OP_REQUIRES_OK(context, context->GetAttr("allocate_copy", &allocate_copy_));
     OP_REQUIRES_OK(context, context->GetAttr("output_data_type", &lpdata_type_));
+    OP_REQUIRES_OK(context, context->GetAttr("pruning_algo", &pruning_algo_));
     OP_REQUIRES_OK(context, context->GetAttr("output_unsigned", &unsigned_data_));
     OP_REQUIRES_OK(context, context->GetAttr("output_precision", &mbits_));
     OP_REQUIRES_OK(context, context->GetAttr("output_exponent_bits", &exponent_bits_));
@@ -316,11 +322,12 @@ class QuantEmuOp : public OpKernel {
           { 
             QuantEmuFunctor<Device, T>()(
               context->eigen_device<Device>(),
+              pruning_algo_, 
               unsigned_data_,
               mbits, 	
 	      round_mode_,
               static_cast<int>(input_tensor.NumElements()),
-              input_tensor.flat<T>().data(),
+              (T*)input_tensor.flat<T>().data(),
               //output_tensor.flat<T>().data());
               poutput_tensor->flat<T>().data());
           }
@@ -336,12 +343,13 @@ class QuantEmuOp : public OpKernel {
 
             BlockC_QuantEmuFunctor<Device, T>()(
 	      context->eigen_device<Device>(), 
+              pruning_algo_, 
               unsigned_data_,
 	      mbits, 
 	      dims, 
               block_size_, 
 	      round_mode_, 
-              input_tensor.flat<T>().data(),
+              (T*)input_tensor.flat<T>().data(),
               //output_tensor.flat<T>().data());
               poutput_tensor->flat<T>().data());
           }
@@ -358,12 +366,13 @@ class QuantEmuOp : public OpKernel {
 
             BlockCHW_QuantEmuFunctor<Device, T>()(
 	      context->eigen_device<Device>(), 
+              pruning_algo_, 
               unsigned_data_,
 	      mbits, 
 	      dims,
               block_size_, 
 	      round_mode_, 
-              input_tensor.flat<T>().data(),
+              (T*)input_tensor.flat<T>().data(),
               //output_tensor.flat<T>().data());
               poutput_tensor->flat<T>().data());
           }
@@ -403,6 +412,7 @@ class QuantEmuOp : public OpKernel {
   string data_format_;
   int allocate_copy_;
   int lpdata_type_;
+  int pruning_algo_;
   int unsigned_data_;
   int mbits_;
   int exponent_bits_;

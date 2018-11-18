@@ -199,18 +199,23 @@ class Conv(Layer):
     if enable_quantop_input == 1 : 
       quant_input_precision = int(os.getenv('QUANTEMU_PRECISION_INPUTS', 23))
       quant_filter_precision = int(os.getenv('QUANTEMU_PRECISION_FILTER', 23)) 
+      quant_pruning_algo_inputs = int(os.getenv('QUANTEMU_CONV_PRUNING_INPUTS', 0)) 
+      quant_pruning_algo_filter = int(os.getenv('QUANTEMU_CONV_PRUNING_FILTER', 0)) 
       quant_unsigned_acts = int(os.getenv('QUANTEMU_CONV_USIGNED_ACTS', 0)) 
 
 
       if inp_channels == 3 :
         quant_input_precision = int(os.getenv('QUANTEMU_FIRST_LAYER_PRECISION', 23))
         quant_filter_precision = int(os.getenv('QUANTEMU_FIRST_LAYER_PRECISION', 23)) 
+        quant_pruning_algo_acts = int(0) 
+        quant_pruning_algo_wts = int(0) 
         quant_unsigned_acts = int(0) 
 
       inputs_qs = quantemu_ops.quantize_emu(inputs,
 		data_format=self.data_format, 
 		allocate_copy=int(os.getenv('QUANTEMU_ALLOCATE_COPY_INPUTS', 0)), 
                 output_data_type=int(os.getenv('QUANTEMU_LPDATA_TYPE', 0)),
+		pruning_algo=int(quant_pruning_algo_inputs), 
 		output_unsigned=int(quant_unsigned_acts), 
                 output_precision=quant_input_precision, #int(os.getenv('QUANTEMU_PRECISION_INPUTS', 23)),
                 output_exponent_bits=int(os.getenv('QUANTEMU_EXPBITS', 5)),
@@ -224,6 +229,7 @@ class Conv(Layer):
 		data_format=self.data_format, 
 		allocate_copy=int(os.getenv('QUANTEMU_ALLOCATE_COPY_FILTER', 0)), 
                 output_data_type=int(os.getenv('QUANTEMU_LPDATA_TYPE', 0)),
+		pruning_algo=int(quant_pruning_algo_filter), 
 		output_unsigned=int(0), 
                 output_precision=quant_filter_precision, #int(os.getenv('QUANTEMU_PRECISION_FILTER', 23)),
                 output_exponent_bits=int(os.getenv('QUANTEMU_EXPBITS', 5)),
@@ -252,6 +258,7 @@ class Conv(Layer):
 		data_format=self.data_format, 
 		allocate_copy=int(os.getenv('QUANTEMU_ALLOCATE_COPY_OUTPUTS', 0)), 
                 output_data_type=int(os.getenv('QUANTEMU_LPDATA_TYPE', 0)),
+		pruning_algo=int(0), 
 		output_unsigned=int(quant_unsigned_acts), 
                 output_precision=quant_output_precision, #int(os.getenv('QUANTEMU_PRECISION_OUTPUTS', 23)),
                 output_exponent_bits=int(os.getenv('QUANTEMU_EXPBITS', 5)),

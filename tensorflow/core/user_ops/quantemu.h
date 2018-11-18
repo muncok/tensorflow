@@ -25,17 +25,17 @@ typedef union ufloat32
 
 template <typename Device, typename T>
 struct QuantEmuFunctor {
-  void operator()(const Device& d, int unsigned_data, int mbits, int rmode, int size, const T* in, T* out);
+  void operator()(const Device& d, int pruning_algo, int unsigned_data, int mbits, int rmode, int size, T* in, T* out);
 };
 
 template <typename Device, typename T>
 struct BlockC_QuantEmuFunctor {
-  void operator()(const Device& d, int unsigned_data, int mbits, int *dims, int block_size, int rmode, const T* in, T* out);
+  void operator()(const Device& d, int pruning_algo, int unsigned_data, int mbits, int *dims, int block_size, int rmode, T* in, T* out);
 };
 
 template <typename Device, typename T>
 struct BlockCHW_QuantEmuFunctor {
-  void operator()(const Device& d, int unsigned_data, int mbits, int *dims, int block_size, int rmode, const T *in, T *out);
+  void operator()(const Device& d, int pruning_algo, int unsigned_data, int mbits, int *dims, int block_size, int rmode, T *in, T *out);
 };
 
 template <typename Device, typename T>

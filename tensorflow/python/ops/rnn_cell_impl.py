@@ -639,10 +639,14 @@ class BasicLSTMCell(LayerRNNCell):
 
     enable_quantop_lstm = int(os.getenv('ENABLE_QUANTOP_LSTM', 0))
     if enable_quantop_lstm == 1:
+      quant_pruning_algo_inputs = int(os.getenv('QUANTEMU_CONV_PRUNING_INPUTS', 0)) 
+      quant_pruning_algo_filter = int(os.getenv('QUANTEMU_CONV_PRUNING_FILTER', 0)) 
+
       inputs_qs = quantemu_ops.quantize_emu(inputs,
 			data_format='unknown', 
                         allocate_copy=int(os.getenv('QUANTEMU_ALLOCATE_COPY_INPUTS', 0)),
                         output_data_type=int(os.getenv('QUANTEMU_LPDATA_TYPE', 0)),
+		        pruning_algo=int(quant_pruning_algo_inputs), 
 			output_unsigned=int(0),
                         output_precision=int(os.getenv('QUANTEMU_PRECISION_INPUTS', 23)),
                         output_exponent_bits=int(os.getenv('QUANTEMU_EXPBITS', 5)),
@@ -656,6 +660,7 @@ class BasicLSTMCell(LayerRNNCell):
 			data_format='unknown', 
                         allocate_copy=int(os.getenv('QUANTEMU_ALLOCATE_COPY_INPUTS', 0)),
                         output_data_type=int(os.getenv('QUANTEMU_LPDATA_TYPE', 0)),
+		        pruning_algo=int(quant_pruning_algo_inputs), 
 			output_unsigned=int(0),
                         output_precision=int(os.getenv('QUANTEMU_PRECISION_INPUTS', 23)),
                         output_exponent_bits=int(os.getenv('QUANTEMU_EXPBITS', 5)),
@@ -669,6 +674,7 @@ class BasicLSTMCell(LayerRNNCell):
 			data_format='unknown', 
                         allocate_copy=int(os.getenv('QUANTEMU_ALLOCATE_COPY_FILTER', 0)),
                         output_data_type=int(os.getenv('QUANTEMU_LPDATA_TYPE', 0)),
+		        pruning_algo=int(quant_pruning_algo_filter), 
 			output_unsigned=int(0),
                         output_precision=int(os.getenv('QUANTEMU_PRECISION_FILTER', 23)),
                         output_exponent_bits=int(os.getenv('QUANTEMU_EXPBITS', 5)),
@@ -695,6 +701,7 @@ class BasicLSTMCell(LayerRNNCell):
 			data_format='unknown', 
                         allocate_copy=int(os.getenv('QUANTEMU_ALLOCATE_COPY_INPUTS', 0)),
                         output_data_type=int(os.getenv('QUANTEMU_LPDATA_TYPE', 0)),
+		        pruning_algo=int(0), 
 			output_unsigned=int(0),
                         output_precision=int(os.getenv('QUANTEMU_PRECISION_INPUTS', 23)),
                         output_exponent_bits=int(os.getenv('QUANTEMU_EXPBITS', 5)),

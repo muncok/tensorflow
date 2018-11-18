@@ -16,13 +16,14 @@ from tensorflow.python.framework import ops
 from tensorflow.python.util.tf_export import tf_export
 
 @tf_export("quantize_emu")
-def quantize_emu(input, data_format='channels_last', allocate_copy=0, output_data_type=0, output_unsigned=0, output_precision=23, output_exponent_bits=5, channel_blocking_type=0, input_channels_per_block=4096, round_mode=0, quantize_gradients=0, quantize_gradients_only=0):
+def quantize_emu(input, data_format='channels_last', allocate_copy=0, output_data_type=0, pruning_algo=0, output_unsigned=0, output_precision=23, output_exponent_bits=5, channel_blocking_type=0, input_channels_per_block=4096, round_mode=0, quantize_gradients=0, quantize_gradients_only=0):
   _quantemu_module = tf.load_op_library(os.path.join(tf.resource_loader.get_root_dir_with_all_resources(), '../../core/user_ops/quantemu.so'))
   return _quantemu_module.quantize_emu(
 		input, 
 		data_format, 
 		allocate_copy, 
 		output_data_type, 
+              	pruning_algo,
                 output_unsigned, 
 		output_precision, 
 		output_exponent_bits, 
@@ -41,6 +42,7 @@ def _quantize_emu_grad(op, grad):
 		data_format=op.get_attr("data_format"), 
 		allocate_copy=int(os.getenv('QUANTEMU_ALLOCATE_COPY_GRAD', 0)), 
 		output_data_type=op.get_attr("output_data_type"), 
+		pruning_algo=op.get_attr("pruning_algo"), 
 		output_unsigned=op.get_attr("output_unsigned"), 
 		output_precision=int(os.getenv('QUANTEMU_PRECISION_GRAD', 23)), 
 		output_exponent_bits=op.get_attr("output_exponent_bits"), 
