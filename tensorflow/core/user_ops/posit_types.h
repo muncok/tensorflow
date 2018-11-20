@@ -8,6 +8,7 @@ extern "C" {
 #include <stdint.h>
 #include <stdbool.h>
 
+
 #define POSIT_LUTYPE    uint64_t
 #define POSIT_UTYPE     uint32_t
 #define POSIT_STYPE     int32_t
@@ -18,6 +19,18 @@ extern "C" {
 #define POSIT_INF       ((POSIT_UTYPE)0x80000000)
 #define POSIT_MSB       ((POSIT_UTYPE)0x80000000)
 #define POSIT_MASK      ((POSIT_UTYPE)0xFFFFFFFF)
+
+struct unpacked_t
+{
+    bool neg;
+    POSIT_STYPE exp;
+    POSIT_UTYPE frac;
+};
+
+POSIT_UTYPE pack_posit(struct unpacked_t up, int nbits, int es);
+struct unpacked_t unpack_posit(POSIT_UTYPE p, int nbits, int es);
+float pack_float(struct unpacked_t up);
+struct unpacked_t unpack_float(float f);
 
 #ifdef __cplusplus
 }

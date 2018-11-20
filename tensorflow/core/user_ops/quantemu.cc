@@ -6,7 +6,8 @@ using namespace tensorflow;
 
 #include <immintrin.h> 
 #include <omp.h> 
-#include "posit_impl.cc" 
+//#include "posit_impl.cc" 
+//#include "posit_types.h" 
   
 using CPUDevice = Eigen::ThreadPoolDevice;
 using GPUDevice = Eigen::GpuDevice;
@@ -246,7 +247,7 @@ struct LowpFloatQuantEmuFunctor <CPUDevice, T> {
     }
   }
 };
-
+#if 0
 template <typename T>
 struct PositQuantEmuFunctor <CPUDevice, T> {
   void operator()(const CPUDevice& d, int m_bits, int es_bits, int size, const T* in, T* out) {
@@ -258,7 +259,7 @@ struct PositQuantEmuFunctor <CPUDevice, T> {
     }
   }
 };
-
+#endif 
 /* OpKernel definition.
  template parameter <T> is the datatype of the tensors.*/
 template <typename Device, typename T>
@@ -394,6 +395,7 @@ class QuantEmuOp : public OpKernel {
           poutput_tensor->flat<T>().data());
       }
       break; 
+#if 0
       case POSIT: 
       {
 	//std::cout << "Posit quantization called" << ", mbits : " << mbits <<  std::endl; 
@@ -406,6 +408,7 @@ class QuantEmuOp : public OpKernel {
           poutput_tensor->flat<T>().data());
       }
       break; 
+#endif 
     }
   }
  private: 
@@ -425,13 +428,13 @@ class QuantEmuOp : public OpKernel {
 
 template class QuantEmuOp<CPUDevice, float>; 
 //template class QuantEmuOp<CPUDevice, Eigen::half>; 
+//  template struct PositQuantEmuFunctor<CPUDevice, T>;	         
 /* Register the CPU kernels. */
 #define REGISTER_CPU(T)                                          \
   template struct QuantEmuFunctor<CPUDevice, T>;		 \
   template struct BlockC_QuantEmuFunctor<CPUDevice, T>;		 \
   template struct BlockCHW_QuantEmuFunctor<CPUDevice, T>;	 \
   template struct LowpFloatQuantEmuFunctor<CPUDevice, T>;	 \
-  template struct PositQuantEmuFunctor<CPUDevice, T>;	         \
   REGISTER_KERNEL_BUILDER(                                       \
       Name("QuantizeEmu").Device(DEVICE_CPU).TypeConstraint<T>("T"), \
       QuantEmuOp<CPUDevice, T>);
@@ -442,13 +445,14 @@ REGISTER_CPU(float);
 
 template class QuantEmuOp<GPUDevice, float>; 
 template class QuantEmuOp<GPUDevice, Eigen::half>; 
+
+//  template struct PositQuantEmuFunctor<GPUDevice, T>;                
 /* Register the GPU kernels. */ 
 #define REGISTER_GPU(T)                                              \
   template struct QuantEmuFunctor<GPUDevice, T>;              	     \
   template struct BlockC_QuantEmuFunctor<GPUDevice, T>;              \
   template struct BlockCHW_QuantEmuFunctor<GPUDevice, T>;            \
   template struct LowpFloatQuantEmuFunctor<GPUDevice, T>;            \
-  template struct PositQuantEmuFunctor<GPUDevice, T>;                \
   REGISTER_KERNEL_BUILDER(                                           \
       Name("QuantizeEmu").Device(DEVICE_GPU).TypeConstraint<T>("T"), \
       QuantEmuOp<GPUDevice, T>);

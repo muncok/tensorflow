@@ -1,12 +1,13 @@
 #include "posit_types.h"
-
+#include <sys/param.h> 
+#if 0
 struct unpacked_t
 {
     bool neg;
     POSIT_STYPE exp;
     POSIT_UTYPE frac;
 };
-
+#endif 
 #define POW2(n) \
     (1 << (n))
 
