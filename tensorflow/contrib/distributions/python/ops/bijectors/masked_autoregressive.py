@@ -61,8 +61,8 @@ class MaskedAutoregressiveFlow(bijector.Bijector):
   `shift_and_log_scale_fn`, `masked_autoregressive_default_template`, achieves
   this property by zeroing out weights in its `masked_dense` layers.
 
-  In the `tf.distributions` framework, a "normalizing flow" is implemented as a
-  `tf.contrib.distributions.bijectors.Bijector`. The `forward` "autoregression"
+  In the `tfp` framework, a "normalizing flow" is implemented as a
+  `tfp.bijectors.Bijector`. The `forward` "autoregression"
   is implemented using a `tf.while_loop` and a deep neural network (DNN) with
   masked weights such that the autoregressive property is automatically met in
   the `inverse`.
@@ -126,8 +126,9 @@ class MaskedAutoregressiveFlow(bijector.Bijector):
   #### Examples
 
   ```python
-  tfd = tf.contrib.distributions
-  tfb = tfd.bijectors
+  import tensorflow_probability as tfp
+  tfd = tfp.distributions
+  tfb = tfp.bijectors
 
   dims = 5
 
@@ -514,9 +515,8 @@ def masked_autoregressive_default_template(
        Masked Autoencoder for Distribution Estimation. In _International
        Conference on Machine Learning_, 2015. https://arxiv.org/abs/1502.03509
   """
-
-  with ops.name_scope(name, "masked_autoregressive_default_template",
-                      values=[log_scale_min_clip, log_scale_max_clip]):
+  name = name or "masked_autoregressive_default_template"
+  with ops.name_scope(name, values=[log_scale_min_clip, log_scale_max_clip]):
     def _fn(x):
       """MADE parameterized via `masked_autoregressive_default_template`."""
       # TODO(b/67594795): Better support of dynamic shape.
@@ -552,8 +552,7 @@ def masked_autoregressive_default_template(
                     else _clip_by_value_preserve_grad)
       log_scale = which_clip(log_scale, log_scale_min_clip, log_scale_max_clip)
       return shift, log_scale
-    return template_ops.make_template(
-        "masked_autoregressive_default_template", _fn)
+    return template_ops.make_template(name, _fn)
 
 
 @deprecation.deprecated(

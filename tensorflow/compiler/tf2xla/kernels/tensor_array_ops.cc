@@ -25,8 +25,8 @@ limitations under the License.
 #include "tensorflow/compiler/tf2xla/xla_op_kernel.h"
 #include "tensorflow/compiler/tf2xla/xla_op_registry.h"
 #include "tensorflow/compiler/tf2xla/xla_resource.h"
-#include "tensorflow/compiler/xla/client/xla_client/xla_builder.h"
-#include "tensorflow/compiler/xla/literal_util.h"
+#include "tensorflow/compiler/xla/client/xla_builder.h"
+#include "tensorflow/compiler/xla/literal.h"
 #include "tensorflow/core/framework/op_kernel.h"
 #include "tensorflow/core/framework/partial_tensor_shape.h"
 #include "tensorflow/core/framework/register_types.h"
@@ -122,7 +122,7 @@ Status GetTensorArrayShape(const XlaResource* resource,
 // relevant slice of 'operand'.
 xla::XlaOp DynamicAddSlice(xla::XlaBuilder* builder, const xla::XlaOp& operand,
                            const xla::XlaOp& update,
-                           const gtl::ArraySlice<int64>& update_dims,
+                           absl::Span<const int64> update_dims,
                            const xla::XlaOp& start_indices) {
   xla::XlaOp current = xla::DynamicSlice(operand, start_indices, update_dims);
   xla::XlaOp sum = xla::Add(current, update);
@@ -167,7 +167,7 @@ class TensorArrayOp : public XlaOpKernel {
 
     XlaContext& xc = XlaContext::Get(ctx);
     XlaResource* var;
-    string name = strings::StrCat("TensorArray: ", tensor_array_name_);
+    string name = absl::StrCat("TensorArray: ", tensor_array_name_);
     OP_REQUIRES_OK(
         ctx, xc.CreateResource(XlaResource::kTensorArray, -1, std::move(name),
                                dtype_, shape, value, /*tensor_array_size=*/size,

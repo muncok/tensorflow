@@ -15,7 +15,7 @@ limitations under the License.
 
 #include "tensorflow/contrib/lite/interpreter.h"
 #include <gtest/gtest.h>
-#include "tensorflow/contrib/lite/error_reporter.h"
+#include "tensorflow/contrib/lite/core/api/error_reporter.h"
 #include "tensorflow/contrib/lite/kernels/internal/compatibility.h"
 #include "tensorflow/contrib/lite/kernels/kernel_util.h"
 #include "tensorflow/contrib/lite/schema/schema_generated.h"
@@ -26,6 +26,13 @@ namespace tflite {
 
 // InterpreterTest is a friend of Interpreter, so it can access context_.
 class InterpreterTest : public ::testing::Test {
+ public:
+  template <typename Delegate>
+  static TfLiteStatus ModifyGraphWithDelegate(
+      Interpreter* interpreter, std::unique_ptr<Delegate> delegate) {
+    return interpreter->ModifyGraphWithDelegate(std::move(delegate));
+  }
+
  protected:
   TfLiteContext* GetInterpreterContext() { return &interpreter_.context_; }
 
@@ -55,6 +62,22 @@ TEST(BasicInterpreter, InvokeInvalidModel) {
   ASSERT_NE(interpreter.Invoke(), kTfLiteOk);
   ASSERT_EQ(interpreter.AllocateTensors(), kTfLiteOk);
   ASSERT_EQ(interpreter.Invoke(), kTfLiteOk);
+}
+
+TEST(BasicInterpreter, TestAllocateTensorsResetVariableTensors) {
+  Interpreter interpreter;
+  int tensor_index;
+  ASSERT_EQ(interpreter.AddTensors(1, &tensor_index), kTfLiteOk);
+  constexpr int kTensorSize = 16;
+  interpreter.SetTensorParametersReadWrite(tensor_index, kTfLiteFloat32, "",
+                                           {kTensorSize}, {}, true);
+  interpreter.SetVariables({tensor_index});
+  ASSERT_EQ(interpreter.AllocateTensors(), kTfLiteOk);
+  TfLiteTensor* tensor = interpreter.tensor(tensor_index);
+  // Ensure that variable tensors are reset to zero.
+  for (int i = 0; i < kTensorSize; ++i) {
+    ASSERT_EQ(tensor->data.f[i], 0.0f);
+  }
 }
 
 // Test size accessor functions.
@@ -631,18 +654,6 @@ TEST(BasicInterpreter, AllocateTwice) {
   ASSERT_EQ(old_tensor1_ptr, interpreter.tensor(1)->data.raw);
 }
 
-struct TestErrorReporter : public ErrorReporter {
-  int Report(const char* format, va_list args) override {
-    char buffer[1024];
-    int size = vsnprintf(buffer, sizeof(buffer), format, args);
-    all_reports += buffer;
-    calls++;
-    return size;
-  }
-  int calls = 0;
-  std::string all_reports;
-};
-
 TEST(BasicInterpreter, TestNullErrorReporter) {
   TestErrorReporter reporter;
   Interpreter interpreter;
@@ -652,8 +663,9 @@ TEST(BasicInterpreter, TestCustomErrorReporter) {
   TestErrorReporter reporter;
   Interpreter interpreter(&reporter);
   ASSERT_NE(interpreter.Invoke(), kTfLiteOk);
-  ASSERT_EQ(reporter.all_reports, "Invoke called on model that is not ready.");
-  ASSERT_EQ(reporter.calls, 1);
+  ASSERT_EQ(reporter.error_messages(),
+            "Invoke called on model that is not ready.");
+  ASSERT_EQ(reporter.num_calls(), 1);
 }
 
 TEST(BasicInterpreter, TestUnsupportedDelegateFunctions) {
@@ -1075,21 +1087,22 @@ class TestDelegate : public ::testing::Test {
         return kTfLiteOk;
       };
       delegate_.CopyToBufferHandle =
-          [](TfLiteDelegate* delegate, TfLiteBufferHandle buffer_handle,
-             void* data, size_t size) -> TfLiteStatus {
+          [](TfLiteContext* context, TfLiteDelegate* delegate,
+             TfLiteBufferHandle buffer_handle, void* data,
+             size_t size) -> TfLiteStatus {
         // TODO(ycling): Implement tests to test buffer copying logic.
         return kTfLiteOk;
       };
       delegate_.CopyFromBufferHandle =
-          [](TfLiteDelegate* delegate, TfLiteBufferHandle buffer_handle,
-             void* data, size_t size) -> TfLiteStatus {
+          [](TfLiteContext* context, TfLiteDelegate* delegate,
+             TfLiteBufferHandle buffer_handle, void* data,
+             size_t size) -> TfLiteStatus {
         // TODO(ycling): Implement tests to test buffer copying logic.
         return kTfLiteOk;
       };
-      delegate_.FreeBufferHandle = [](TfLiteDelegate* delegate,
-                                      TfLiteBufferHandle* handle) {
-        *handle = kTfLiteNullBufferHandle;
-      };
+      delegate_.FreeBufferHandle =
+          [](TfLiteContext* context, TfLiteDelegate* delegate,
+             TfLiteBufferHandle* handle) { *handle = kTfLiteNullBufferHandle; };
       // Store type-punned data SimpleDelegate structure.
       delegate_.data_ = reinterpret_cast<void*>(this);
     }
@@ -1294,6 +1307,57 @@ TEST_F(TestDelegateWithDynamicTensors, AllowDynamicTensors) {
   // The node should be replaced because dynamic tensors are allowed. Therefore
   // only node ID in the execution plan is changed from 0 to 1.
   ASSERT_EQ(interpreter_->execution_plan()[0], 1);
+}
+
+TEST(TestDelegateOwnership, ProperlyDisposed) {
+  struct TfLiteInterpreterOwnedDelegate : public TfLiteDelegate {
+    TfLiteInterpreterOwnedDelegate(bool* destroyed, bool* prepared)
+        : destroyed(destroyed), prepared(prepared) {
+      Prepare = [](TfLiteContext*, TfLiteDelegate* delegate) -> TfLiteStatus {
+        *static_cast<TfLiteInterpreterOwnedDelegate*>(delegate)->prepared =
+            true;
+        return kTfLiteOk;
+      };
+    }
+    ~TfLiteInterpreterOwnedDelegate() { *destroyed = true; }
+
+    bool* destroyed;
+    bool* prepared;
+  };
+
+  // Construct a delegate with flags for indicating preparation/destruction.
+  bool destroyed = false;
+  bool prepared = false;
+  std::unique_ptr<TfLiteInterpreterOwnedDelegate> delegate(
+      new TfLiteInterpreterOwnedDelegate(&destroyed, &prepared));
+  {
+    // Create an interpreter and assemble a simple graph.
+    Interpreter interpreter;
+    TfLiteRegistration registration = {nullptr, nullptr, nullptr, nullptr};
+    ASSERT_EQ(interpreter.AddTensors(2), kTfLiteOk);
+    ASSERT_EQ(interpreter.SetInputs({0}), kTfLiteOk);
+    ASSERT_EQ(interpreter.SetOutputs({1}), kTfLiteOk);
+    ASSERT_EQ(interpreter.AddNodeWithParameters({0}, {1}, nullptr, 0, nullptr,
+                                                &registration),
+              kTfLiteOk);
+
+    // Pass delegate ownership to that interpreter.
+    ASSERT_EQ(InterpreterTest::ModifyGraphWithDelegate(&interpreter,
+                                                       std::move(delegate)),
+              kTfLiteOk);
+
+    // The delegate should be prepared as normal, and should be preserved.
+    EXPECT_TRUE(prepared);
+    EXPECT_FALSE(destroyed);
+
+    // Interpreter interaction should not impact the delegate's validity.
+    interpreter.AllocateTensors();
+    interpreter.Invoke();
+    EXPECT_FALSE(destroyed);
+  }
+
+  // Only after the interpreter is destroyed should the delegate be destroyed.
+  EXPECT_TRUE(destroyed);
 }
 
 }  // namespace

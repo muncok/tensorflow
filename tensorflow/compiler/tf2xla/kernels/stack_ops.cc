@@ -23,7 +23,7 @@ limitations under the License.
 #include "tensorflow/compiler/tf2xla/xla_helpers.h"
 #include "tensorflow/compiler/tf2xla/xla_op_kernel.h"
 #include "tensorflow/compiler/tf2xla/xla_op_registry.h"
-#include "tensorflow/compiler/xla/literal_util.h"
+#include "tensorflow/compiler/xla/literal.h"
 #include "tensorflow/core/framework/op_kernel.h"
 #include "tensorflow/core/framework/partial_tensor_shape.h"
 #include "tensorflow/core/framework/register_types.h"
@@ -111,7 +111,7 @@ class StackOp : public XlaOpKernel {
     xla::XlaOp value;
     XlaContext& xc = XlaContext::Get(ctx);
     XlaResource* resource;
-    string name = strings::StrCat("Stack: ", stack_name_);
+    string name = absl::StrCat("Stack: ", stack_name_);
     OP_REQUIRES_OK(
         ctx, xc.CreateResource(XlaResource::kStack, -1, std::move(name), dtype_,
                                TensorShape(), value, /*tensor_array_size=*/size,
