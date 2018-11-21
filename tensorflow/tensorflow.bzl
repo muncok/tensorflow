@@ -1496,7 +1496,7 @@ def tf_custom_op_library(name, srcs = [], gpu_srcs = [], deps = [], linkopts = [
         native.cc_library(
             name = basename + "_gpu",
             srcs = gpu_srcs,
-            copts = _cuda_copts() + if_tensorrt(["-DGOOGLE_TENSORRT=1"]), # Naveen  + ["--ftz=true"]
+            copts = _cuda_copts() + if_tensorrt(["-DGOOGLE_TENSORRT=1"] + ["--ftz=true"]), # Naveen  
             features = if_cuda(["-use_header_modules"]),
             deps = deps + if_cuda_is_configured(cuda_deps) + if_rocm_is_configured(rocm_deps),
         )
