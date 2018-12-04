@@ -2,14 +2,24 @@
 #define EIGEN_USE_GPU
 #include "quantemu.h"
 #include "third_party/eigen3/unsupported/Eigen/CXX11/Tensor"
-//#include "posit_pack.h" 
+//#include "posit_types.h" 
 
 using namespace tensorflow;
 using GPUDevice = Eigen::GpuDevice;
 
 #define CUBLOCK_SIZE 512 
 
-#include "posit_impl.cu.cc" 
+//#include "posit_impl.cu.cc" 
+#if 0 //GOOGLE_CUDA
+extern __device__ 
+POSIT_UTYPE _pack_posit(struct unpacked_t up, int nbits, int es);
+extern __device__ 
+struct unpacked_t _unpack_posit(POSIT_UTYPE p, int nbits, int es);
+extern __device__ 
+float _pack_float(struct unpacked_t up);
+extern __device__ 
+struct unpacked_t _unpack_float(float f);
+#endif 
 
 __device__ 
 Eigen::half atomicMinf(
@@ -576,6 +586,7 @@ void QuantEmuLowpCudaKernel(
   }
 }
 
+#if 0
 __global__ 
 void QuantEmuPositCudaKernel(
 	int m_bits, 
@@ -591,7 +602,6 @@ void QuantEmuPositCudaKernel(
       out[gid] = outval;
   }
 }
-
 __global__ 
 void QuantEmuPositCudaKernel(
 	int m_bits, 
@@ -608,6 +618,7 @@ void QuantEmuPositCudaKernel(
   }
 }
 
+#endif 
 /* Define the GPU implementation that launches the CUDA kernel. */
 template <typename T>
 struct QuantEmuFunctor<GPUDevice, T> { 
@@ -800,7 +811,7 @@ struct LowpFloatQuantEmuFunctor <GPUDevice, T> {
 };
 template struct LowpFloatQuantEmuFunctor<GPUDevice, float>;
 template struct LowpFloatQuantEmuFunctor<GPUDevice, Eigen::half>;
-
+#if 0
 template <typename T>
 struct PositQuantEmuFunctor <GPUDevice, T> {
   void operator()(const GPUDevice& d, int m_bits, int es_bits, int size, const T* in, T* out) {
@@ -814,5 +825,5 @@ struct PositQuantEmuFunctor <GPUDevice, T> {
 };
 template struct PositQuantEmuFunctor<GPUDevice, float>;
 template struct PositQuantEmuFunctor<GPUDevice, Eigen::half>;
-
+#endif 
 #endif  // GOOGLE_CUDA

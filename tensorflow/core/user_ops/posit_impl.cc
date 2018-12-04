@@ -1,11 +1,6 @@
 #include "posit_types.h"
+#include <sys/param.h> 
 
-struct unpacked_t
-{
-    bool neg;
-    POSIT_STYPE exp;
-    POSIT_UTYPE frac;
-};
 
 #ifdef __GNUC__
 #define CLZ(n) \

@@ -11,6 +11,7 @@ load(
     "//tensorflow:tensorflow.bzl",
     "tf_cc_binary",
     "tf_cc_test",
+    "tf_copts",
 )
 
 tf_proto_library_cc(
@@ -93,6 +94,7 @@ cc_library(
         ":runtime",
         ":toco_port",
         "//tensorflow/core:lib",
+        "@com_google_absl//absl/types:optional",
     ],
 )
 
@@ -176,7 +178,7 @@ cc_library(
         "graph_transformations/convert_reorder_axes.cc",
         "graph_transformations/convert_squeeze_to_reshape.cc",
         "graph_transformations/convert_trivial_addn_to_add.cc",
-        "graph_transformations/convert_trivial_stack_to_reshape.cc",
+        "graph_transformations/convert_trivial_pack_to_reshape.cc",
         "graph_transformations/convert_trivial_tile_to_concat.cc",
         "graph_transformations/convert_trivial_transpose_to_reshape.cc",
         "graph_transformations/create_im2col_arrays.cc",
@@ -211,8 +213,7 @@ cc_library(
         "graph_transformations/quantization_util.cc",
         "graph_transformations/quantization_util.h",
         "graph_transformations/quantize.cc",
-        "graph_transformations/quantize_weights.cc",
-        "graph_transformations/read_fake_quant_min_max.cc",
+        "graph_transformations/read_array_minmax_and_narrow_range_from_fake_quant.cc",
         "graph_transformations/remove_final_dequantize_op.cc",
         "graph_transformations/remove_tensorflow_assert.cc",
         "graph_transformations/remove_tensorflow_identity.cc",
@@ -236,19 +237,23 @@ cc_library(
         "graph_transformations/resolve_constant_fake_quant.cc",
         "graph_transformations/resolve_constant_fill.cc",
         "graph_transformations/resolve_constant_gather.cc",
+        "graph_transformations/resolve_constant_pack.cc",
         "graph_transformations/resolve_constant_random_uniform.cc",
         "graph_transformations/resolve_constant_range.cc",
         "graph_transformations/resolve_constant_reshape.cc",
+        "graph_transformations/resolve_constant_select.cc",
         "graph_transformations/resolve_constant_shape_or_rank.cc",
         "graph_transformations/resolve_constant_slice.cc",
-        "graph_transformations/resolve_constant_stack.cc",
         "graph_transformations/resolve_constant_strided_slice.cc",
+        "graph_transformations/resolve_constant_tile.cc",
         "graph_transformations/resolve_constant_transpose.cc",
         "graph_transformations/resolve_constant_unary.cc",
-        "graph_transformations/resolve_mean_attributes.cc",
+        "graph_transformations/resolve_fake_quant_args_from_vars.cc",
+        "graph_transformations/resolve_gather_attributes.cc",
         "graph_transformations/resolve_multiply_by_zero.cc",
         "graph_transformations/resolve_pad_attributes.cc",
         "graph_transformations/resolve_padv2_attributes.cc",
+        "graph_transformations/resolve_reduce_attributes.cc",
         "graph_transformations/resolve_reorder_axes.cc",
         "graph_transformations/resolve_reshape_attributes.cc",
         "graph_transformations/resolve_slice_attributes.cc",
@@ -302,7 +307,7 @@ cc_library(
         "tensorflow_util.h",
         "toco_tooling.h",
     ],
-    copts = select({
+    copts = tf_copts() + select({
         "//tensorflow:darwin": ["-DTOCO_SUPPORT_PORTABLE_PROTOS=0"],
         "//conditions:default": [],
     }),
@@ -336,11 +341,13 @@ cc_library(
 tf_cc_test(
     name = "import_tensorflow_test",
     srcs = ["import_tensorflow_test.cc"],
+    tags = ["no_oss"],
     deps = [
         ":toco_tooling",
         "//tensorflow/core:framework",
         "//tensorflow/core:graph",
         "//tensorflow/core:lib",
+        "//tensorflow/core:ops",
         "//tensorflow/core:protos_all_cc",
         "@com_google_googletest//:gtest_main",
     ],
@@ -356,6 +363,7 @@ cc_library(
         "dump_graphviz.h",
         "tooling_util.h",
     ],
+    copts = tf_copts(),
     visibility = ["//visibility:public"],
     deps = [
         ":model",
@@ -365,6 +373,7 @@ cc_library(
         ":toco_graphviz_dump_options",
         ":toco_port",
         ":types_proto_cc",
+        "//tensorflow/contrib/lite/kernels/internal:types",
         "//tensorflow/core:lib",
         "@com_google_absl//absl/strings",
         "@com_googlesource_code_re2//:re2",
@@ -375,6 +384,7 @@ cc_library(
 tf_cc_test(
     name = "tooling_util_test",
     srcs = ["tooling_util_test.cc"],
+    tags = ["no_oss"],
     deps = [
         ":model",
         ":tooling_util",
@@ -398,8 +408,11 @@ tf_cc_binary(
         ":toco_port",
         ":toco_tooling",
         ":types_proto_cc",
-        "//tensorflow/core:lib",
         "@com_google_absl//absl/strings",
+        "//tensorflow/core:lib",
+        # We cannot embed the core:ops dependency directly into :toco_tooling as
+        # it can conflict with downstream deps when toco is used as a library.
+        "//tensorflow/core:ops",
     ],
 )
 
@@ -409,6 +422,7 @@ tf_cc_test(
     data = [
         "toco_port_test.cc",
     ],
+    tags = ["no_oss"],
     deps = [
         ":toco_port",
         "@com_google_googletest//:gtest_main",

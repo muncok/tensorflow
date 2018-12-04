@@ -4,7 +4,16 @@ tf_custom_op_library(
     name = "quantemu.so",
     srcs = ["quantemu.cc"],
     gpu_srcs = ["quantemu.cu.cc"],
+#    srcs = ["quantemu.cc", "posit_impl.cc"],
+#    gpu_srcs = ["quantemu.cu.cc", "posit_impl.cu.cc"],
+    deps = [":otherfiles"],
     linkopts = ["-fopenmp"],
+)
+
+cc_library(
+    name = "otherfiles",
+    srcs = ["quantemu.h", "posit_types.h"],
+    visibility = ["//visibility:public"],
 )
 
 py_library(

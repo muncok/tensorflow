@@ -68,7 +68,7 @@ message GPUOptions {
   //    after the process starts.  Users are required to use vendor
   //    specific mechanisms (e.g., CUDA_VISIBLE_DEVICES) to control the
   //    physical to visible device mapping prior to invoking TensorFlow.
-  // 2. In the code, the ids in this list are also called "CUDA GPU id"s,
+  // 2. In the code, the ids in this list are also called "platform GPU id"s,
   //    and the 'virtual' ids of GPU devices (i.e. the ids in the device
   //    name "/device:GPU:<id>") are also called "TF GPU id"s. Please
   //    refer to third_party/tensorflow/core/common_runtime/gpu/gpu_id.h
@@ -145,7 +145,8 @@ message GPUOptions {
     bool use_unified_memory = 2;
 
     // If > 1, the number of device-to-device copy streams to create
-    // for each GPUDevice.
+    // for each GPUDevice.  Default value is 0, which is automatically
+    // converted to 1.
     int32 num_dev_to_dev_copy_streams = 3;
   }
 
@@ -389,6 +390,16 @@ message ConfigProto {
   message Experimental {
     // Task name for group resolution.
     string collective_group_leader = 1;
+
+    // We removed the flag client_handles_error_formatting. Marking the tag
+    // number as reserved.
+    // TODO(shikharagarwal): Should we just remove this tag so that it can be
+    // used in future for other purpose?
+    reserved 2;
+
+    // Which executor to use, the default executor will be used
+    // if it is an empty string or "DEFAULT"
+    string executor_type = 3;
   };
 
   Experimental experimental = 16;
@@ -412,6 +423,11 @@ message RunOptions {
   int64 timeout_in_ms = 2;
 
   // The thread pool to use, if session_inter_op_thread_pool is configured.
+  // To use the caller thread set this to -1 - this uses the caller thread
+  // to execute Session::Run() and thus avoids a context switch. Using the
+  // caller thread to execute Session::Run() should be done ONLY for simple
+  // graphs, where the overhead of an additional context switch is
+  // comparable with the overhead of Session::Run().
   int32 inter_op_thread_pool = 3;
 
   // Whether the partition graph(s) executed by the executor(s) should be
@@ -437,6 +453,11 @@ message RunOptions {
     // same group_key value (in a distributed computation where tasks
     // run disjoint graphs).
     int64 collective_graph_key = 1;
+    // If true, then operations (using the inter-op pool) across all
+    // session::run() calls will be centrally scheduled, optimizing for (median
+    // and tail) latency.
+    // Consider using this option for CPU-bound workloads like inference.
+    bool use_run_handler_pool = 2;
   };
 
   Experimental experimental = 8;

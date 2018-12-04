@@ -58,7 +58,8 @@ class BigtableTableResource : public ResourceBase {
   BigtableTableResource(BigtableClientResource* client, string table_name)
       : client_(client),
         table_name_(std::move(table_name)),
-        table_(client->get_client(), table_name_) {
+        table_(client->get_client(), table_name_,
+               google::cloud::bigtable::AlwaysRetryMutationPolicy()) {
     client_->Ref();
   }
 
@@ -77,6 +78,8 @@ class BigtableTableResource : public ResourceBase {
   const string table_name_;
   ::google::cloud::bigtable::noex::Table table_;
 };
+
+namespace data {
 
 // BigtableReaderDatasetIterator is an abstract class for iterators from
 // datasets that are "readers" (source datasets, not transformation datasets)
@@ -136,6 +139,8 @@ class BigtableReaderDatasetIterator : public DatasetIterator<Dataset> {
   std::unique_ptr<::google::cloud::bigtable::RowReader> reader_ GUARDED_BY(mu_);
   ::google::cloud::bigtable::RowReader::iterator iterator_ GUARDED_BY(mu_);
 };
+
+}  // namespace data
 
 }  // namespace tensorflow
 

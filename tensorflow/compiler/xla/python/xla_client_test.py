@@ -171,6 +171,24 @@ class ComputationsWithConstantsTest(LocalComputationTest):
         c.Constant(NumpyArrayF32([[1, -1, 1], [-1, 1, -1]])))
     self._ExecuteAndCompareClose(c, expected=[[2, 1, 4], [3, 6, 5]])
 
+  def testShiftLeft(self):
+    c = self._NewComputation()
+    c.ShiftLeft(c.Constant(NumpyArrayS32([3])),
+                c.Constant(NumpyArrayS32([2])))
+    self._ExecuteAndCompareClose(c, expected=[12])
+
+  def testShiftRightArithmetic(self):
+    c = self._NewComputation()
+    c.ShiftRightArithmetic(c.Constant(NumpyArrayS32([-2])),
+                           c.Constant(NumpyArrayS32([1])))
+    self._ExecuteAndCompareClose(c, expected=[-1])
+
+  def testShiftRightLogical(self):
+    c = self._NewComputation()
+    c.ShiftRightLogical(c.Constant(NumpyArrayS32([-1])),
+                        c.Constant(NumpyArrayS32([1])))
+    self._ExecuteAndCompareClose(c, expected=[2**31 - 1])
+
   def testGetProto(self):
     c = self._NewComputation()
     c.Add(
@@ -471,6 +489,34 @@ class SingleOpTest(LocalComputationTest):
     for src_dtype, dst_dtype in itertools.product(xla_types, xla_types):
       _ConvertAndTest(x, src_dtype, dst_dtype)
 
+  def testBitcastConvertType(self):
+    xla_x32_types = {
+        np.int32: xla_client.xla_data_pb2.S32,
+        np.float32: xla_client.xla_data_pb2.F32,
+    }
+
+    xla_x64_types = {
+        np.int64: xla_client.xla_data_pb2.S64,
+        np.float64: xla_client.xla_data_pb2.F64,
+    }
+
+    def _ConvertAndTest(template, src_dtype, dst_dtype, dst_etype):
+      c = self._NewComputation()
+      x = c.Constant(np.array(template, dtype=src_dtype))
+      c.BitcastConvertType(x, dst_etype)
+
+      result = c.Build().Compile().Execute()
+      expected = np.array(template, src_dtype).view(dst_dtype)
+
+      self.assertEqual(result.shape, expected.shape)
+      self.assertEqual(result.dtype, expected.dtype)
+      np.testing.assert_equal(result, expected)
+
+    x = [0, 1, 0, 0, 1]
+    for xla_types in [xla_x32_types, xla_x64_types]:
+      for src_dtype, dst_dtype in itertools.product(xla_types, xla_types):
+        _ConvertAndTest(x, src_dtype, dst_dtype, xla_types[dst_dtype])
+
   def testCrossReplicaSumOneReplica(self):
     samples = [
         NumpyArrayF32(42.0),
@@ -614,6 +660,30 @@ class SingleOpTest(LocalComputationTest):
                          [0., 0., 0.],
                          [40., 50., 0.]]]])
     self._ExecuteAndCompareClose(c, expected=np.transpose(result, (1, 3, 0, 2)))
+
+  def testConvGeneralDilatedGroupedConvolutionF32(self):
+    c = self._NewComputation()
+    a = lambda *dims: np.arange(np.prod(dims)).reshape(dims).astype("float32")
+    lhs = a(1, 2, 2, 3)
+    rhs = a(2, 1, 1, 2) * 10
+    strides = [1, 1]
+    pads = [(1, 0), (0, 1)]
+    lhs_dilation = (2, 1)
+    rhs_dilation = (1, 1)
+    dimension_numbers = ("NCHW", "OIHW", "NCHW")
+    feature_group_count = 2
+    c.ConvGeneralDilated(c.Constant(lhs), c.Constant(rhs),
+                         strides, pads, lhs_dilation, rhs_dilation,
+                         dimension_numbers, feature_group_count)
+    result = np.array([[[[0., 0., 0.],
+                         [10., 20., 0.],
+                         [0., 0., 0.],
+                         [40., 50., 0.]],
+                        [[0., 0., 0.],
+                         [330., 380., 160.],
+                         [0., 0., 0.],
+                         [480., 530., 220.]]]])
+    self._ExecuteAndCompareClose(c, expected=result)
 
   def testBooleanNot(self):
     c = self._NewComputation()
