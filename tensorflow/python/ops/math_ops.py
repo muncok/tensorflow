@@ -1961,7 +1961,6 @@ def matmul(a,
 
     enable_quantop_matmul = int(os.getenv('ENABLE_QUANTOP_MATMUL_INPUTS', 0))
     if enable_quantop_matmul == 1 :
-      print('mathops.matmul is quantized ..')
       a = quantemu_ops.quantize_emu(a,
                 data_format='unknown',
                 allocate_copy=int(os.getenv('QUANTEMU_ALLOCATE_COPY_INPUTS', 0)),

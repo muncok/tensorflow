@@ -173,6 +173,18 @@ class Conv(Layer):
           dtype=self.dtype)
     else:
       self.bias = None
+
+#    # Naveen PACT Code 
+#    if self.activation is not None:
+#      self.pact_threshold = self.add_weight(
+#          name='pact_threshold',
+#          shape=(1,),
+#          initializer=None,
+#          regularizer=None,
+#          constraint=None,
+#          trainable=True,
+#          dtype=self.dtype)
+
     self.input_spec = InputSpec(ndim=self.rank + 2,
                                 axes={channel_axis: input_dim})
     self._convolution_op = nn_ops.Convolution(
@@ -294,6 +306,8 @@ class Conv(Layer):
 
     if self.activation is not None:
       return self.activation(outputs)
+      # Naveen, with PACT threshold clipping 
+      #return self.activation(outputs, max_value=self.pact_threshold)
     return outputs
 
   def compute_output_shape(self, input_shape):

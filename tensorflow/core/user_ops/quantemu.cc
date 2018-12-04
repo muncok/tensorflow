@@ -16,6 +16,7 @@ REGISTER_OP("QuantizeEmu")
     .Attr("T: type")
     .Input("to_quantize: T")
     .Output("quantized: T")
+//    .Output("scale: T")
     .Attr("data_format: {'unknown', 'channels_first', 'channels_last'}")
     .Attr("allocate_copy: int = 0") 
     .Attr("output_data_type: int = 0")
@@ -32,6 +33,7 @@ REGISTER_OP("QuantizeEmu")
       c->set_output(0, c->input(0));
       return Status::OK(); 
     });
+
 
 #define ROUNDING_CTRL (_MM_FROUND_TO_NEAREST_INT |_MM_FROUND_NO_EXC)
 #ifdef AVX512F
