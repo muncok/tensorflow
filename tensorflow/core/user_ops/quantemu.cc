@@ -29,6 +29,7 @@ REGISTER_OP("QuantizeEmu")
     .Attr("input_channels_per_block: int = 0")
     .Attr("round_mode: int = 0")
     .Attr("quantize_gradients: int = 0")
+    .Attr("gradient_precision: int = 23")
     .Attr("quantize_gradients_only: int = 0")
     .SetShapeFn([](::tensorflow::shape_inference::InferenceContext* c) {
       c->set_output(0, c->input(0));
@@ -280,6 +281,7 @@ class QuantEmuOp : public OpKernel {
     OP_REQUIRES_OK(context, context->GetAttr("input_channels_per_block", &block_size_));
     OP_REQUIRES_OK(context, context->GetAttr("round_mode", &round_mode_));
     OP_REQUIRES_OK(context, context->GetAttr("quantize_gradients", &quantize_grad_));
+    OP_REQUIRES_OK(context, context->GetAttr("gradient_precision", &grad_mbits_));
     OP_REQUIRES_OK(context, context->GetAttr("quantize_gradients_only", &quantize_grad_only_));
 
     //std::cout << "data_format : " << data_format_ << ", lpdata_type: " << lpdata_type_ << ", mbits_: " << mbits_ << 
@@ -425,6 +427,7 @@ class QuantEmuOp : public OpKernel {
   int block_size_;
   int round_mode_;
   int quantize_grad_;
+  int grad_mbits_;
   int quantize_grad_only_;
 };
 
