@@ -398,7 +398,6 @@ void estimate_mode_range (
 
 __global__ 
 void QuantEmuCudaKernel(
-	int unsigned_data, 
 	int mbits, 
 	Eigen::half *absmax, 
 	int rmode, 
@@ -412,49 +411,30 @@ void QuantEmuCudaKernel(
   float sfdequant;
 
   quant_max = pow(2, mbits-1) - 1;
-  if (unsigned_data) quant_max = pow(2, mbits) - 1;
   sfquant = (float)(quant_max / __half2float(*absmax));
   sfdequant = (float)1.0/sfquant;
-//  float sfquant_br; 
-//  sfquant_br = sfquant * 4.0;  /* quantize to nbits + 2, we need them for rounding */ 
 
   int tid = threadIdx.x;
   int gid = (blockDim.x * blockIdx.x) + tid + block_offset;
   int size = block_offset + block_size; 
   float fabsfmax = __half2float(*absmax); 
  
-//  for (int gid = (blockIdx.x * blockDim.x) + threadIdx.x + block_offset; gid < size; gid += blockDim.x * gridDim.x) {
   for (gid; gid < size; gid += blockDim.x*gridDim.x) {
       float inval = __half2float(in[gid]);
       /* saturate anything larger than fmax_val to fmax_val */
       inval = fminf (inval, fabsfmax); 
       inval = fmaxf (inval, -fabsfmax);
       /* write back saturated value */ 
-      in[gid] = __float2half_rn(inval);
+      // in[gid] = __float2half_rn(inval);  /* no need for write back */
 
-      //int ival = (int)(inval * sfquant);
       /* round to nearest even */ 
       int ival = __half2int_rn (inval * sfquant);
-#if 0
-      int rbias = ((int)(inval * sfquant_br)) & 0x3;
-      if (in[gid] == 0.0) { ival = 0; rbias = 0; }
-      int negative = (ival < 0);
-      /* disable sign bit for rounding */
-      if(negative) ival = 0 - ival;
-      ival += ((rmode==BIASED) & (rbias > 0));
-      ival += ((rmode==NEAREST) & (rbias > 1));
-      /* saturate after rounding */
-      if (ival > quant_max) ival = quant_max;
-      /* restore sign */
-      if(negative) ival = 0 - ival;
-#endif 
       out[gid] = __float2half_rn (ival * sfdequant);
   }
 }
 
 __global__ 
 void QuantEmuCudaKernel(
-        int unsigned_data, 
 	int mbits, 
 	float *absmax, 
 	int rmode, 
@@ -467,43 +447,107 @@ void QuantEmuCudaKernel(
   float sfdequant;
 
   quant_max = pow(2, mbits-1) - 1;
-  if (unsigned_data == 1) quant_max = pow(2, mbits) - 1;
   sfquant = (float)(quant_max / *absmax);
   sfdequant = (float)1.0/sfquant;
-//  float sfquant_br; 
-//  sfquant_br = sfquant * 4.0;  /* quantize to nbits + 2, we need them for rounding */ 
 
   int tid = threadIdx.x;
   int gid = (blockDim.x * blockIdx.x) + tid + block_offset;
   int size = block_offset + block_size; 
   float fabsfmax = *absmax; 
  
-  //for (int gid = (blockIdx.x * blockDim.x) + threadIdx.x + block_offset; gid < size; gid += blockDim.x * gridDim.x) {
   for (gid; gid < size; gid += blockDim.x*gridDim.x) {
       float inval = in[gid];
       /* saturate anything larger than fmax_val to fmax_val */
       inval = fminf (inval, fabsfmax); 
       inval = fmaxf (inval, -fabsfmax);
       /* write back saturated value */ 
-      in[gid] = inval; 
-#if 10
+      // in[gid] = inval; /* no need for write back */ 
       /* round to the nearest even */ 
       int ival = __float2int_rn (inval * sfquant);
-#else 
-      int ival = (int)(inval * sfquant);
-      int rbias = ((int)(inval * sfquant_br)) & 0x3;
-      if (in[gid] == 0.0) { ival = 0; rbias = 0; }
-      int negative = (ival < 0);
-      /* disable sign bit for rounding */
-      if(negative) ival = 0 - ival;
-      ival += ((rmode==BIASED) & (rbias > 0));
-      ival += ((rmode==NEAREST) & (rbias > 1));
-      /* saturate after rounding */
-      if (ival > quant_max) ival = quant_max;
-      /* restore sign */
-      if(negative) ival = 0 - ival;
-#endif 
       out[gid] = ival * sfdequant;
+  }
+}
+
+__global__ 
+void QuantEmuCudaKernel_Unsigned(
+	int mbits, 
+	Eigen::half *max, 
+	Eigen::half *min, 
+	int rmode, 
+	const int block_offset, 
+	const int block_size, 
+	Eigen::half *in, 
+	Eigen::half *out) 
+{
+  int quant_max, quant_min; 
+  float sfquant;
+  float sfdequant;
+
+  quant_max = pow(2, mbits) - 1;
+  quant_min = 0; 
+  float max_float = __half2float(*max); 
+  float min_float = __half2float(*min); 
+
+  sfquant = (float)((quant_max - quant_min) / (max_float - min_float));
+  sfdequant = (float)1.0/sfquant;
+
+  int tid = threadIdx.x;
+  int gid = (blockDim.x * blockIdx.x) + tid + block_offset;
+  int size = block_offset + block_size; 
+ 
+  for (gid; gid < size; gid += blockDim.x*gridDim.x) {
+      float inval = __half2float(in[gid]);
+      /* saturate anything larger than fmax_val to fmax_val */
+      inval = fminf (inval, max_float); 
+      inval = fmaxf (inval, min_float);
+      /* write back saturated value */ 
+      // in[gid] = __float2half_rn(inval);  /* no need for write back */
+
+      /* shift to positive domain */ 
+      inval -= min_float; 
+      /* round to nearest even */ 
+      int ival = __half2int_rn (inval * sfquant);
+      /* dequantize and shift to original regime */ 
+      out[gid] = __float2half_rn ((ival * sfdequant) + min_float);
+  }
+}
+
+__global__ 
+void QuantEmuCudaKernel_Unsigned(
+	int mbits, 
+	float *max, 
+	float *min, 
+	int rmode, 
+	const int block_offset, 
+	const int block_size, 
+	float* in, float* out) 
+{
+  int quant_max, quant_min; 
+  float sfquant;
+  float sfdequant;
+
+  quant_max = pow(2, mbits) - 1;
+  quant_min = 0;
+  sfquant = (float)((quant_max-quant_min) / (*max-*min));
+  sfdequant = (float)1.0/sfquant;
+
+  int tid = threadIdx.x;
+  int gid = (blockDim.x * blockIdx.x) + tid + block_offset;
+  int size = block_offset + block_size; 
+ 
+  for (gid; gid < size; gid += blockDim.x*gridDim.x) {
+      float inval = in[gid];
+      /* saturate anything larger than fmax_val to fmax_val */
+      inval = fminf (inval, *max); 
+      inval = fmaxf (inval, *min);
+      /* write back saturated value */ 
+      // in[gid] = inval; /* no need for write back */
+      /* shift to positive domain */ 
+      inval -= *min;
+      /* round to the nearest even */ 
+      int ival = __float2int_rn (inval * sfquant);
+      /* dequantize and shift to normal regime */ 
+      out[gid] = (ival * sfdequant) + *min;
   }
 }
 
@@ -641,6 +685,7 @@ struct QuantEmuFunctor<GPUDevice, T> {
     cudaMemset(&d_min, 0, sizeof(T));
     cudaMemset(&d_max, 0, sizeof(T));
     cudaMemset(&d_sum, 0, sizeof(float));
+#if 0
     if (pruning_algo == 0) { 
       max_reduce<<<grid, block, block*sizeof(float), d.stream()>>>(in, d_absmax, 0, size); 
     } else { 
@@ -649,7 +694,15 @@ struct QuantEmuFunctor<GPUDevice, T> {
       estimate_mode_range <<<grid, block, 0, d.stream()>>>(d_absmax, d_sum, d_min, d_max, size);
     }
     //cudaMemcpy(&absmax, d_absmax, sizeof(T), cudaMemcpyDeviceToHost); 
-    QuantEmuCudaKernel <<<grid, block, 0, d.stream()>>>(unsigned_data, mbits, d_absmax, rmode, 0, size, in, out);
+    QuantEmuCudaKernel <<<grid, block, 0, d.stream()>>>(mbits, d_absmax, rmode, 0, size, in, out);
+#endif 
+    if(unsigned_data) {
+      min_max_reduce<<<grid, block, 2*block*sizeof(float), d.stream()>>>(in, d_min, d_max, 0, size); 
+      QuantEmuCudaKernel_Unsigned <<<grid, block, 0, d.stream()>>>(mbits, d_max, d_min, rmode, 0, size, in, out);
+    } else { 
+      max_reduce<<<grid, block, block*sizeof(float), d.stream()>>>(in, d_absmax, 0, size); 
+      QuantEmuCudaKernel <<<grid, block, 0, d.stream()>>>(mbits, d_absmax, rmode, 0, size, in, out);
+    }
 //    cudaStreamSynchronize(d.stream());
     cudaFree(d_absmax);
     cudaFree(d_min);
@@ -698,6 +751,7 @@ struct BlockC_QuantEmuFunctor<GPUDevice, T> {
           cudaMemset(&d_min[k], 0, sizeof(T));
           cudaMemset(&d_max[k], 0, sizeof(T));
           cudaMemset(&d_sum[k], 0, sizeof(float));
+#if 0
           if (pruning_algo == 0) { 
             max_reduce<<<grid, block, block*sizeof(float), streams[k]>>>(input_flat, &d_absmax[k], block_offset, block_size); 
  	  } else {
@@ -708,7 +762,6 @@ struct BlockC_QuantEmuFunctor<GPUDevice, T> {
 	    estimate_mode_range <<<grid, block, 0, streams[k]>>>(&d_absmax[k], &d_sum[k], &d_min[k], &d_max[k], block_size);
 	  }
           QuantEmuCudaKernel <<<grid, block, 0, streams[k]>>>(
-					unsigned_data, 
 					mbits, 
 					&d_absmax[k], 
 					rmode, 
@@ -716,6 +769,30 @@ struct BlockC_QuantEmuFunctor<GPUDevice, T> {
 					block_size, 
 					input_flat, 
 					output_flat);
+#endif 
+          if (unsigned_data) {
+            min_max_reduce<<<grid, block, 2*block*sizeof(float), streams[k]>>>(input_flat, &d_min[k], &d_max[k], 
+				block_offset, block_size); 
+            QuantEmuCudaKernel_Unsigned <<<grid, block, 0, streams[k]>>>(
+					mbits, 
+					&d_max[k], 
+					&d_min[k], 
+					rmode, 
+					block_offset, 
+					block_size, 
+					input_flat, 
+					output_flat);
+ 	  } else {
+            max_reduce<<<grid, block, block*sizeof(float), streams[k]>>>(input_flat, &d_absmax[k], block_offset, block_size); 
+            QuantEmuCudaKernel <<<grid, block, 0, streams[k]>>>(
+					mbits, 
+					&d_absmax[k], 
+					rmode, 
+					block_offset, 
+					block_size, 
+					input_flat, 
+					output_flat);
+          }
 //          cudaStreamSynchronize(streams[k]);
         }
       }
@@ -768,7 +845,7 @@ struct BlockCHW_QuantEmuFunctor<GPUDevice, T> {
           cudaMemset(&d_min[k], 0, sizeof(T));
           cudaMemset(&d_max[k], 0, sizeof(T));
           cudaMemset(&d_sum[k], 0, sizeof(float));
-
+#if 0
           if (pruning_algo == 0) { 
             max_reduce<<<grid, block, block*sizeof(float), streams[k]>>>(input_flat, &d_absmax[k], block_offset, block_size); 
  	  } else {
@@ -779,7 +856,6 @@ struct BlockCHW_QuantEmuFunctor<GPUDevice, T> {
 	    estimate_mode_range <<<grid, block, 0, streams[k]>>>(&d_absmax[k], &d_sum[k], &d_min[k], &d_max[k], block_size);
    	  }
           QuantEmuCudaKernel <<<grid, block, 0, streams[k]>>>(
-					unsigned_data, 
 					mbits, 
 					&d_absmax[k], 
 					rmode, 
@@ -787,6 +863,30 @@ struct BlockCHW_QuantEmuFunctor<GPUDevice, T> {
 					block_size, 
 					input_flat, 
 					output_flat);
+#endif 
+          if (unsigned_data) { 
+            min_max_reduce<<<grid, block, 2*block*sizeof(float), streams[k]>>>(input_flat, &d_min[k], &d_max[k], 
+					block_offset, block_size); 
+            QuantEmuCudaKernel_Unsigned <<<grid, block, 0, streams[k]>>>(
+					mbits, 
+					&d_max[k], 
+					&d_min[k], 
+					rmode, 
+					block_offset, 
+					block_size, 
+					input_flat, 
+					output_flat);
+ 	  } else {
+            max_reduce<<<grid, block, block*sizeof(float), streams[k]>>>(input_flat, &d_absmax[k], block_offset, block_size); 
+            QuantEmuCudaKernel <<<grid, block, 0, streams[k]>>>(
+					mbits, 
+					&d_absmax[k], 
+					rmode, 
+					block_offset, 
+					block_size, 
+					input_flat, 
+					output_flat);
+	  }
 //          cudaStreamSynchronize(streams[k]);
         }
       }
