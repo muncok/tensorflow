@@ -2,6 +2,7 @@
 #define EIGEN_USE_GPU
 #include "quantemu.h"
 #include "third_party/eigen3/unsupported/Eigen/CXX11/Tensor"
+#include <limits>
 //#include "posit_types.h" 
 
 using namespace tensorflow;
@@ -179,7 +180,7 @@ void min_max_reduce(
     int tid = threadIdx.x;
     int gid = (blockDim.x * blockIdx.x) + tid + block_offset; 
     shared_max[tid] = 0; 
-    shared_min[tid] = 0; 
+    shared_min[tid] = std::numeric_limits<float>::max(); 
     size_t elements = block_offset+ block_size; 
 
     while (gid < elements) {
@@ -225,6 +226,7 @@ void min_max_reduce(
     int tid = threadIdx.x;
     int gid = (blockDim.x * blockIdx.x) + tid + block_offset; 
     shared_max[tid] = 0; 
+    shared_min[tid] = std::numeric_limits<float>::max(); 
     size_t elements = block_offset+ block_size; 
 
     while (gid < elements) {
