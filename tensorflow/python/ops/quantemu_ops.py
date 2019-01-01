@@ -36,6 +36,10 @@ def quantize_emu(input, data_format='channels_last', allocate_copy=0, output_dat
 
 @ops.RegisterGradient("QuantizeEmu")
 def _quantize_emu_grad(op, grad):
+
+  # clipping gradient to  -1, 1
+  #tf.clip_by_value(grad, -1, 1)
+
   if op.get_attr("quantize_gradients") is 1 : 
     _quantemu_module = tf.load_op_library(os.path.join(tf.resource_loader.get_root_dir_with_all_resources(), '../../core/user_ops/quantemu.so'))
     return [_quantemu_module.quantize_emu(
@@ -44,7 +48,7 @@ def _quantize_emu_grad(op, grad):
 		allocate_copy=int(os.getenv('QUANTEMU_ALLOCATE_COPY_GRAD', 0)), 
 		output_data_type=op.get_attr("output_data_type"), 
 		pruning_algo=op.get_attr("pruning_algo"), 
-		output_unsigned=op.get_attr("output_unsigned"), 
+		output_unsigned=int(os.getenv('QUANTEMU_CONV_UNSIGNED_GRAD', 0)), 
 		output_precision=op.get_attr("gradient_precision"),  # Output precision is gradient precision 
 		output_exponent_bits=op.get_attr("output_exponent_bits"), 
 		channel_blocking_type=int(os.getenv('QUANTEMU_CBLOCK_TYPE_GRAD', 0)), 

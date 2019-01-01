@@ -222,7 +222,7 @@ class Conv(Layer):
       quant_grad_precision = int(os.getenv('QUANTEMU_PRECISION_CONV_GRAD', 23)) 
       quant_pruning_algo_inputs = int(os.getenv('QUANTEMU_CONV_PRUNING_INPUTS', 0)) 
       quant_pruning_algo_filter = int(os.getenv('QUANTEMU_CONV_PRUNING_FILTER', 0)) 
-      quant_unsigned_acts = int(os.getenv('QUANTEMU_CONV_USIGNED_ACTS', 0)) 
+      quant_unsigned_acts = int(os.getenv('QUANTEMU_CONV_UNSIGNED_ACTS', 0)) 
 
 
       if inp_channels == 3 :
@@ -272,7 +272,7 @@ class Conv(Layer):
 
     if enable_quantop_output == 1 : 
       quant_output_precision = int(os.getenv('QUANTEMU_PRECISION_CONV_OUTPUTS', 23)) 
-      quant_unsigned_acts = int(os.getenv('QUANTEMU_CONV_USIGNED_ACTS', 0)) 
+      quant_unsigned_acts = int(os.getenv('QUANTEMU_CONV_UNSIGNED_ACTS', 0)) 
 
       if inp_channels == 3 :
         quant_output_precision = int(os.getenv('QUANTEMU_FIRST_LAYER_PRECISION', 23))
