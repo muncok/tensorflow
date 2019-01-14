@@ -19,6 +19,7 @@ from __future__ import division
 from __future__ import print_function
 
 import re
+import os
 from tensorflow.contrib.quantize.python import common
 from tensorflow.contrib.quantize.python import graph_matcher
 from tensorflow.contrib.quantize.python import input_to_ops
@@ -27,6 +28,7 @@ from tensorflow.python.framework import ops
 from tensorflow.python.ops import control_flow_ops
 from tensorflow.python.ops import math_ops
 from tensorflow.python.platform import tf_logging as logging
+from tensorflow.python.ops import quantemu_ops
 
 # Quantizable operation types that are supported by the quantization rewrite.
 _QUANTIZABLE_TYPES = {'Conv2D', 'MatMul', 'DepthwiseConv2dNative'}
@@ -187,6 +189,209 @@ def Quantize(graph,
             quant_delay=quant_delay,
             vars_collection=vars_collection,
             bits=activation_bits,
+            producer_scope=scope)
+
+
+def Quantize_custom(graph,
+             is_training,
+             data_type=1,
+             quantize_gradients=False,
+             weight_bits=8,
+             activation_bits=8,
+             gradient_bits=8,
+             ema_decay=0.999,
+             quant_delay=None,
+             vars_collection=ops.GraphKeys.GLOBAL_VARIABLES,
+             channel_blocking=0, 
+             channels_per_block=0,
+             scope=None):
+  """Updates graph with quantization operations.
+
+  Currently we quantize the following tensors:
+  * Conv/MatMul: Quantize the weights if it matches.
+  * Activation: Quantize the output if it matches.
+  * Bypass/Post-activation Bypass: Quantize both input and output
+    if it matches.
+
+  Args:
+    graph: Graph to modify.
+    is_training: Whether quantizing training graph or eval graph.
+    weight_bits: Number of bits to use for quantizing weights.
+    activation_bits: Number of bits to use for quantizing activations.
+    ema_decay: (Optional) Float, EMA decay parameter.  EMA is used to update
+      quantization intervals for quantizing activations (see here about EMA:
+      https://en.wikipedia.org/wiki/Moving_average#Exponential_moving_average).
+    quant_delay: (Optional, default None) Int, count of global steps for which
+      to delay quantization.  This helps weights stabilize at the start of
+      training.
+    vars_collection: (Optional) Collection where to store the variables for
+      quantization interval ends.
+    scope: The scope to be transformed. If it's not None, only the ops which
+      are in this scope will be transformed.
+  Raises:
+    ValueError: When quantization fails.
+  """
+  if scope and not scope.endswith('/'):
+    scope += '/'
+
+  input_to_ops_map = input_to_ops.InputToOps(graph)
+  for layer_match in _FindLayersToQuantize(graph):
+    # Quantize the weights.
+    context = _GetContextFromOp(layer_match.layer_op)
+
+    data_format = 'channels_last' 
+#    if 'MatMul' in layer_match.layer_op.name  
+#       print('layer name : ', layer_match.layer_op.name)
+#       data_format = 'None'
+#    else if layer_match.layer_op.get_attr('data_format') == b'NCHW' : 
+#       data_format = 'channels_first' 
+
+    # If `scope` is given, only quantize it if the consumer of weights
+    # (the layer op) is in the right scope.
+ 
+    _InsertQuantOpCustom(
+        context,
+        'weights_quant',
+        layer_match.weight_tensor.op, [layer_match.layer_op],
+        is_training,
+        moving_avg=False,
+        ema_decay=ema_decay,
+        quant_delay=quant_delay,
+        narrow_range=True,
+        vars_collection=vars_collection,
+        bits=weight_bits,
+        create_copy=True,
+        data_type=data_type,
+        data_format=data_format, 
+        gradients=quantize_gradients,
+        gradient_bits=gradient_bits,
+        channel_blocking=channel_blocking, 
+        channels_per_block=channels_per_block, 
+        consumer_scope=scope)
+
+    # Quantize the activations.
+    consumer_ops = input_to_ops_map.ConsumerOperations(
+        layer_match.activation_op)
+    add_context = context
+    if layer_match.bypass_op:
+      pattern_match_result = re.search(r'^(.*)/([^/]+)', context)
+      if pattern_match_result is not None:
+        add_context = pattern_match_result.group(1)
+      else:
+        add_context = ''
+    # If `scope` is given, only quantize it if the producer of weights
+    # (usually it's the layer op) is in the right scope.
+    _InsertQuantOpCustom(
+        add_context,
+        'act_quant',
+        layer_match.activation_op,
+        consumer_ops,
+        is_training,
+        moving_avg=True,
+        ema_decay=ema_decay,
+        quant_delay=quant_delay,
+        vars_collection=vars_collection,
+        bits=activation_bits,
+        create_copy=False,
+        data_type=data_type,
+        data_format=data_format, 
+        gradients=quantize_gradients,
+        gradient_bits=gradient_bits,
+        channel_blocking=channel_blocking, 
+        channels_per_block=channels_per_block, 
+        init_min=0.0,
+        producer_scope=scope)
+
+    # Quantize the inputs and output to the bypass (if it exists). The input to
+    # the bypass is the bias add, and the output is the activation.
+    if layer_match.bypass_op is not None:
+      # If `scope` is given, only quantize it if the both the producer and the
+      # consumer are in the right scope.
+      _InsertQuantOpCustom(
+          context,
+          'conv_quant',
+          layer_match.bias_add_op, [layer_match.bypass_op],
+          is_training,
+          moving_avg=True,
+          ema_decay=ema_decay,
+          quant_delay=quant_delay,
+          vars_collection=vars_collection,
+          bits=activation_bits,
+          create_copy=False,
+          data_type=data_type,
+          data_format=data_format, 
+          gradients=quantize_gradients,
+          gradient_bits=gradient_bits,
+          channel_blocking=channel_blocking, 
+          channels_per_block=channels_per_block, 
+          producer_scope=scope,
+          consumer_scope=scope)
+      # Make sure the op following this isn't an activation. In which case, we
+      # shouldn't quantize it, since the activation will be Fused into the
+      # Add at inference time.
+      consumers = input_to_ops_map.ConsumerOperations(layer_match.bypass_op)
+      if any([consumer.type in _ACTIVATION_TYPES for consumer in consumers]):
+        logging.info('Skipping %s, because its followed by an activation.',
+                     layer_match.bypass_op.name)
+      else:
+        _InsertQuantOpCustom(
+            add_context,
+            'add_quant',
+            layer_match.bypass_op,
+            input_to_ops_map.ConsumerOperations(layer_match.bypass_op),
+            is_training,
+            moving_avg=True,
+            ema_decay=ema_decay,
+            quant_delay=quant_delay,
+            vars_collection=vars_collection,
+            bits=activation_bits,
+            create_copy=False,
+            data_type=data_type,
+            data_format=data_format, 
+            gradients=quantize_gradients,
+            gradient_bits=gradient_bits,
+            channel_blocking=channel_blocking, 
+            channels_per_block=channels_per_block, 
+            producer_scope=scope,
+            consumer_scope=scope)
+
+    # Quantize bypass ops that occur after the activation.
+    if layer_match.post_activation_bypass_op is not None:
+      pattern_match_result = re.search(
+          r'^(.*)/([^/]+)', layer_match.post_activation_bypass_op.name)
+      if pattern_match_result is not None:
+        post_activation_bypass_context = pattern_match_result.group(1)
+      else:
+        post_activation_bypass_context = ''
+      # If `scope` is given, only quantize it if the producer is in the right
+      # scope.
+      # Make sure the op following this isn't an activation. In which case, we
+      # shouldn't quantize it, since the activation will be Fused into the
+      # Add at inference time.
+      consumers = input_to_ops_map.ConsumerOperations(
+          layer_match.post_activation_bypass_op)
+      if any([consumer.type in _ACTIVATION_TYPES for consumer in consumers]):
+        logging.info('Skipping %s, because its followed by an activation.',
+                     layer_match.post_activation_bypass_op.name)
+      else:
+        _InsertQuantOpCustom(
+            post_activation_bypass_context,
+            'post_activation_bypass_quant',
+            layer_match.post_activation_bypass_op,
+            consumers,
+            is_training,
+            moving_avg=True,
+            ema_decay=ema_decay,
+            quant_delay=quant_delay,
+            vars_collection=vars_collection,
+            bits=activation_bits,
+            create_copy=False,
+            data_type=data_type,
+            data_format=data_format, 
+            gradients=quantize_gradients,
+            gradient_bits=gradient_bits,
+            channel_blocking=channel_blocking, 
+            channels_per_block=channels_per_block, 
             producer_scope=scope)
 
 
@@ -589,6 +794,189 @@ def _InsertQuantOp(context,
               vars_collection=vars_collection,
               name_prefix=name_prefix))
 
+    if quant_delay and quant_delay > 0:
+      activate_quant = math_ops.greater_equal(
+          common.CreateOrGetQuantizationStep(),
+          quant_delay,
+          name=name_prefix + '/activate_quant')
+      quant = control_flow_ops.cond(
+          activate_quant,
+          lambda: quant,
+          lambda: inputs,
+          name=name_prefix + '/delayed_quant')
+  else:
+    # If a fake quant op is present already, make sure that
+    # any downstream use of the tensor reroutes to the appropriate quantized
+    # tensor. If there is no quant_delay, this is simply the output of the
+    # fake quant op. If there is a quant delay, we reroute to the output
+    # of the delayed quant operation, which inserts quantization only after
+    # a specified quant_delay
+
+    quant = fake_quant_op.outputs[0]
+    if quant_delay and quant_delay > 0:
+      name_prefix = '/'.join(quant.name.split('/')[:-1])
+      quant = quant.graph.get_tensor_by_name(name_prefix +
+                                             '/delayed_quant/Merge:0')
+    pruned_consumer_set = set()
+    for consumer in consumers:
+      fake_quant_dest_op = _GetFollowingFakeQuantOp(consumer.outputs[0])
+      if (fake_quant_dest_op is None or
+          fake_quant_dest_op.name != fake_quant_op.name):
+        pruned_consumer_set.add(consumer)
+    consumers = pruned_consumer_set
+
+    # If we have
+    # input->pass_through->fake_quant
+    # there is nothing to reroute.
+    #
+    # If we have
+    #  input-> pass_through->fake_quant
+    #                |-> consumer
+    # Then we reroute such that:
+    # input-> pass_through->fake_quant
+    #                            |-> consumer
+  if consumers:
+    tensors_modified_count = common.RerouteTensor(
+        quant, inputs, can_modify=consumers)
+    # Some operations can have multiple output tensors going to the same
+    # consumer. Since consumers is a set, we need to ensure that
+    # tensors_modified_count is greater than or equal to the length of the set
+    # of consumers.
+    if tensors_modified_count < len(consumers):
+      raise ValueError('No inputs quantized for ops: [%s]' % ', '.join(
+          [consumer.name for consumer in consumers]))
+
+
+def _InsertQuantOpCustom(context,
+                   name,
+                   producer,
+                   consumers,
+                   is_training,
+                   moving_avg=True,
+                   init_min=-6.0,
+                   init_max=6.0,
+                   create_copy=False,
+                   data_type=1,
+                   data_format='None', 
+                   bits=8,
+                   gradients=False,
+                   gradient_bits=8,
+                   channel_blocking=0,
+                   channels_per_block=0,
+                   ema_decay=0.999,
+                   quant_delay=None,
+                   vars_collection=ops.GraphKeys.GLOBAL_VARIABLES,
+                   narrow_range=False,
+                   producer_scope=None,
+                   consumer_scope=None):
+  """Inserts a quant op between a producer op and (multiple) consumer ops.
+
+  Args:
+    context: Context where producer and consumer operations are nested.
+    name: Name for the new quantization op within the context.
+    producer: Producer operation of the pairs where quantization will be
+      inserted.
+    consumers: Consumer operations of the pairs.
+    is_training: Whether quantizing training graph or eval graph.
+    moving_avg: Specifies whether to use exponential moving average or just
+      the last value seen.
+    init_min: Starting minimum value for the new quantization op.
+    init_max: Starting maximum value for the new quantization op.
+    bits: Number of bits to use for quantization, must be between 2 and 8.
+    ema_decay: (Optional) Float, EMA decay parameter.  EMA is used to update
+      quantization intervals for quantizing activations (see here about EMA:
+      https://en.wikipedia.org/wiki/Moving_average#Exponential_moving_average).
+    quant_delay: (Optional, default None) Int, count of global steps for which
+      to delay quantization.  This helps weights stabilize at the start of
+      training.
+    vars_collection: (Optional) Collection where to store the variables for
+      quantization interval ends.
+    narrow_range: Whether to use the narrow quantization range
+      [1; 2^bits - 1] or wide range [0; 2^bits - 1].
+    producer_scope: The restriction of producer scope. If not None, the new op
+      will be inserted only when the producer is in this scope.
+    consumer_scope: The restriction of producer scope. If not None, the new op
+      will be inserted only when all the consumers are in this scope.
+  Raises:
+    ValueError: When producer operation is not directly connected to the
+      consumer operation.
+  """
+  if producer_scope and not producer.name.startswith(producer_scope):
+    logging.info(
+        '_InsertQuantOp ignores context="%s" name="%s" '
+        'because producer "%s" is not in scope "%s"',
+        context, name, producer.name, producer_scope)
+    return
+
+  if consumer_scope:
+    consumers_in_scope = []
+    for consumer in consumers:
+      if consumer.name.startswith(consumer_scope):
+        consumers_in_scope.append(consumer)
+      else:
+        logging.info(
+            '_InsertQuantOp context="%s" name="%s" ignores '
+            'consumer "%s" because it is not in scope "%s"',
+            context, name, consumer.name, consumer_scope)
+        return
+    consumers = consumers_in_scope
+
+  name_prefix = _AddContextToName(context, name)
+  # This is needed on TPU where name_scope == 'TPUReplicate/loop', and
+  # name_prefix starts with 'TPUReplicate/loop/'; without dropping it
+  # variables are created as TPUReplicate/loop/TPUReplicate/loop/..., which
+  # breaks things later.
+  name_scope = ops.get_name_scope()
+  if name_scope:
+    name_prefix = common.DropStringPrefix(name_prefix, name_scope + '/')
+
+  inputs = producer.outputs[0]
+  # Prevent ops from being quantized multiple times. Bypass ops can sometimes
+  # overlap between multiple matches, so we need to ensure that we don't
+  # add duplicate FakeQuant operations.
+  fake_quant_op = _GetFollowingFakeQuantOp(inputs)
+
+  # If we find that we are attempting to insert a fake quant op following
+  # a fake quant, we skip inserting a fake quant op
+
+  if fake_quant_op is None:
+    quant = (
+    quantemu_ops.quantize_emu(inputs,
+                data_format=data_format, 
+                allocate_copy=int(create_copy == 1),
+                output_data_type=int(data_type),
+                pruning_algo=int(0),
+                output_unsigned=int(0),
+                output_precision=bits, 
+                channel_blocking_type=int(channel_blocking),
+                input_channels_per_block=int(channels_per_block),
+                quantize_gradients=int(gradients),
+                gradient_precision=int(gradient_bits)))
+    """
+    if moving_avg:
+      quant = (
+          quant_ops.MovingAvgQuantize(
+              inputs,
+              init_min=init_min,
+              init_max=init_max,
+              ema_decay=ema_decay,
+              is_training=is_training,
+              num_bits=bits,
+              narrow_range=narrow_range,
+              vars_collection=vars_collection,
+              name_prefix=name_prefix))
+    else:
+      quant = (
+          quant_ops.LastValueQuantize(
+              inputs,
+              init_min=init_min,
+              init_max=init_max,
+              is_training=is_training,
+              num_bits=bits,
+              narrow_range=narrow_range,
+              vars_collection=vars_collection,
+              name_prefix=name_prefix))
+    """
     if quant_delay and quant_delay > 0:
       activate_quant = math_ops.greater_equal(
           common.CreateOrGetQuantizationStep(),

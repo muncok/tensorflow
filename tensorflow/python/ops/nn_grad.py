@@ -27,6 +27,8 @@ from tensorflow.python.ops import gen_nn_ops
 from tensorflow.python.ops import gradients_impl
 from tensorflow.python.ops import math_ops
 from tensorflow.python.ops import nn_ops
+import os
+from tensorflow.python.ops import quantemu_ops
 
 
 @ops.RegisterGradient("Conv2DBackpropInput")
@@ -502,29 +504,90 @@ def _Conv2DGrad(op, grad):
   dilations = op.get_attr("dilations")
   strides = op.get_attr("strides")
   padding = op.get_attr("padding")
-  use_cudnn_on_gpu = op.get_attr("use_cudnn_on_gpu")
   data_format = op.get_attr("data_format")
+  use_cudnn_on_gpu = op.get_attr("use_cudnn_on_gpu")
   shape_0, shape_1 = array_ops.shape_n([op.inputs[0], op.inputs[1]])
-  return [
-      nn_ops.conv2d_backprop_input(
-          shape_0,
-          op.inputs[1],
-          grad,
-          dilations=dilations,
-          strides=strides,
-          padding=padding,
-          use_cudnn_on_gpu=use_cudnn_on_gpu,
-          data_format=data_format),
-      nn_ops.conv2d_backprop_filter(
-          op.inputs[0],
-          shape_1,
-          grad,
-          dilations=dilations,
-          strides=strides,
-          padding=padding,
-          use_cudnn_on_gpu=use_cudnn_on_gpu,
-          data_format=data_format)
-  ]
+
+  enable_quantop_grad  = int(os.getenv('ENABLE_QUANTOP_CONV_GRAD', 0))
+  enable_quantop_input = int(os.getenv('ENABLE_QUANTOP_CONV', 0))
+
+  dformat = 'channels_last' 
+  if data_format == b'NCHW' :  
+     dformat = 'channels_first'
+  elif data_format == b'None' :
+     dformat = 'unknown'
+
+  if enable_quantop_grad == 1: 
+     grad = quantemu_ops.quantize_emu(grad,
+		data_format=dformat, 
+                data_type=int(os.getenv('QUANTEMU_GRAD_DATA_TYPE', 0)),
+                precision=int(os.getenv('QUANTEMU_PRECISION_CONV_GRADS', 23)),
+                exponent_bits=int(os.getenv('QUANTEMU_EXPBITS', 5)),
+                channel_blocking_type=int(os.getenv('QUANTEMU_CBLOCK_TYPE_CONV_GRADS', 0)),
+                channels_per_block=int(os.getenv('QUANTEMU_CBLOCK_SIZE_GRADS', 0)),
+                round_mode=int(os.getenv('QUANTEMU_RMODE_GRADS', 0))) 
+
+  if enable_quantop_input == 1: 
+     acts = quantemu_ops.quantize_emu(op.inputs[1],
+		data_format=dformat, 
+                data_type=int(os.getenv('QUANTEMU_INPUT_DATA_TYPE', 0)),
+                precision=int(os.getenv('QUANTEMU_PRECISION_CONV_INPUTS', 23)),
+                exponent_bits=int(os.getenv('QUANTEMU_EXPBITS', 5)),
+                channel_blocking_type=int(os.getenv('QUANTEMU_CBLOCK_TYPE_CONV_INPUTS', 0)),
+                channels_per_block=int(os.getenv('QUANTEMU_CBLOCK_SIZE_INPUTS', 0)),
+                round_mode=int(os.getenv('QUANTEMU_RMODE_INPUTS', 0))) 
+     filters = quantemu_ops.quantize_emu(op.inputs[0],
+		data_format=dformat, 
+		allocate_copy=int(1), 
+                data_type=int(os.getenv('QUANTEMU_FILTER_DATA_TYPE', 0)),
+                precision=int(os.getenv('QUANTEMU_PRECISION_CONV_FILTERS', 23)),
+                exponent_bits=int(os.getenv('QUANTEMU_EXPBITS', 5)),
+                channel_blocking_type=int(os.getenv('QUANTEMU_CBLOCK_TYPE_CONV_FILTERS', 0)),
+                channels_per_block=int(os.getenv('QUANTEMU_CBLOCK_SIZE_FILTERS', 0)),
+                round_mode=int(os.getenv('QUANTEMU_RMODE_FILTERS', 0))) 
+     return [
+         nn_ops.conv2d_backprop_input(
+             shape_0,
+             #op.inputs[1],
+             acts,
+             grad,
+             dilations=dilations,
+             strides=strides,
+             padding=padding,
+             use_cudnn_on_gpu=use_cudnn_on_gpu,
+             data_format=data_format),
+         nn_ops.conv2d_backprop_filter(
+             #op.inputs[0],
+             filters,
+             shape_1,
+             grad,
+             dilations=dilations,
+             strides=strides,
+             padding=padding,
+             use_cudnn_on_gpu=use_cudnn_on_gpu,
+             data_format=data_format)
+     ]
+  else : # No Quantization 
+     return [
+         nn_ops.conv2d_backprop_input(
+             shape_0,
+             op.inputs[1],
+             grad,
+             dilations=dilations,
+             strides=strides,
+             padding=padding,
+             use_cudnn_on_gpu=use_cudnn_on_gpu,
+             data_format=data_format),
+         nn_ops.conv2d_backprop_filter(
+             op.inputs[0],
+             shape_1,
+             grad,
+             dilations=dilations,
+             strides=strides,
+             padding=padding,
+             use_cudnn_on_gpu=use_cudnn_on_gpu,
+             data_format=data_format)
+     ]
 
 
 @ops.RegisterGradient("DepthwiseConv2dNative")
@@ -780,6 +843,37 @@ def _BaseFusedBatchNormGrad(op, use_v2, *grad):
   """
   x = op.inputs[0]
   grad_y = grad[0]
+
+  enable_quantop_grad  = int(os.getenv('ENABLE_QUANTOP_BNORM_GRAD', 0))
+  enable_quantop_input = int(os.getenv('ENABLE_QUANTOP_BNORM', 0))
+
+  dformat = 'channels_last' 
+  if op.get_attr("data_format") == b'NCHW' :  
+     dformat = 'channels_first'
+  elif op.get_attr("data_format") == b'None' :
+     dformat = 'unknown'
+
+  if enable_quantop_grad == 1: 
+     grad_y = quantemu_ops.quantize_emu(grad_y,
+		data_format=dformat, 
+                data_type=int(os.getenv('QUANTEMU_GRAD_DATA_TYPE', 0)),
+                precision=int(os.getenv('QUANTEMU_PRECISION_BNORM_GRADS', 23)),
+                exponent_bits=int(os.getenv('QUANTEMU_EXPBITS', 5)),
+                channel_blocking_type=int(os.getenv('QUANTEMU_CBLOCK_TYPE_BNORM_GRADS', 0)),
+                channels_per_block=int(os.getenv('QUANTEMU_CBLOCK_SIZE_GRADS', 0)),
+                round_mode=int(os.getenv('QUANTEMU_RMODE_GRADS', 0))) 
+
+  if enable_quantop_input == 1: 
+     x = quantemu_ops.quantize_emu(x,
+		data_format=dformat, 
+                data_type=int(os.getenv('QUANTEMU_INPUT_DATA_TYPE', 0)),
+                precision=int(os.getenv('QUANTEMU_PRECISION_BNORM_INPUTS', 23)),
+                exponent_bits=int(os.getenv('QUANTEMU_EXPBITS', 5)),
+                channel_blocking_type=int(os.getenv('QUANTEMU_CBLOCK_TYPE_BNORM_INPUTS', 0)),
+                channels_per_block=int(os.getenv('QUANTEMU_CBLOCK_SIZE_INPUTS', 0)),
+                round_mode=int(os.getenv('QUANTEMU_RMODE_INPUTS', 0))) 
+
+
   scale = op.inputs[1]
   epsilon = op.get_attr("epsilon")
   data_format = op.get_attr("data_format")

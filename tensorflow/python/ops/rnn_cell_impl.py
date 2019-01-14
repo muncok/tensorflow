@@ -748,53 +748,32 @@ class BasicLSTMCell(LayerRNNCell):
 
     enable_quantop_lstm = int(os.getenv('ENABLE_QUANTOP_LSTM', 0))
     if enable_quantop_lstm == 1:
-      quant_pruning_algo_inputs = int(os.getenv('QUANTEMU_LSTM_PRUNING_INPUTS', 0)) 
-      quant_pruning_algo_filter = int(os.getenv('QUANTEMU_LSTM_PRUNING_FILTER', 0)) 
-
       inputs_qs = quantemu_ops.quantize_emu(inputs,
 			data_format='unknown', 
                         allocate_copy=int(os.getenv('QUANTEMU_ALLOCATE_COPY_INPUTS', 0)),
-                        output_data_type=int(os.getenv('QUANTEMU_LPDATA_TYPE', 0)),
-		        pruning_algo=int(quant_pruning_algo_inputs), 
-			output_unsigned=int(0),
-                        output_precision=int(os.getenv('QUANTEMU_PRECISION_LSTM_INPUTS', 23)),
-                        output_exponent_bits=int(os.getenv('QUANTEMU_EXPBITS', 5)),
-                        channel_blocking_type=int(os.getenv('QUANTEMU_CBLOCK_TYPE_LSTM_INPUTS', 0)),
-                        input_channels_per_block=int(os.getenv('QUANTEMU_CBLOCK_SIZE_INPUTS', 0)),
+                        data_type=int(os.getenv('QUANTEMU_INPUT_DATA_TYPE', 0)),
+                        precision=int(os.getenv('QUANTEMU_PRECISION_LSTM_INPUTS', 23)),
+                        exponent_bits=int(os.getenv('QUANTEMU_EXPBITS', 5)),
                         round_mode=int(os.getenv('QUANTEMU_RMODE_INPUTS', 0)), 
-                        quantize_gradients=int(os.getenv('ENABLE_QUANTGRAD_LSTM_INPUTS', 0)),
-                        gradient_precision=int(os.getenv('QUANTEMU_PRECISION_LSTM_GRAD', 23)),
-                	quantize_gradients_only=int(0) ) 
+                        quantize_gradients=int(0))
 
       h_qs = quantemu_ops.quantize_emu(h,
 			data_format='unknown', 
                         allocate_copy=int(os.getenv('QUANTEMU_ALLOCATE_COPY_INPUTS', 0)),
-                        output_data_type=int(os.getenv('QUANTEMU_LPDATA_TYPE', 0)),
-		        pruning_algo=int(quant_pruning_algo_inputs), 
-			output_unsigned=int(0),
-                        output_precision=int(os.getenv('QUANTEMU_PRECISION_LSTM_INPUTS', 23)),
-                        output_exponent_bits=int(os.getenv('QUANTEMU_EXPBITS', 5)),
-                        channel_blocking_type=int(os.getenv('QUANTEMU_CBLOCK_TYPE_LSTM_INPUTS', 0)),
-                        input_channels_per_block=int(os.getenv('QUANTEMU_CBLOCK_SIZE_INPUTS', 0)),
+                        data_type=int(os.getenv('QUANTEMU_INPUT_DATA_TYPE', 0)),
+                        precision=int(os.getenv('QUANTEMU_PRECISION_LSTM_INPUTS', 23)),
+                        exponent_bits=int(os.getenv('QUANTEMU_EXPBITS', 5)),
                         round_mode=int(os.getenv('QUANTEMU_RMODE_INPUTS', 0)), 
-                        quantize_gradients=int(os.getenv('ENABLE_QUANTGRAD_LSTM_INPUTS', 0)),
-                        gradient_precision=int(os.getenv('QUANTEMU_PRECISION_LSTM_GRAD', 23)),
-                	quantize_gradients_only=int(0) ) 
+                        quantize_gradients=int(0))
 
       kernel_qs = quantemu_ops.quantize_emu(self._kernel,
 			data_format='unknown', 
-                        allocate_copy=int(os.getenv('QUANTEMU_ALLOCATE_COPY_FILTER', 0)),
-                        output_data_type=int(os.getenv('QUANTEMU_LPDATA_TYPE', 0)),
-		        pruning_algo=int(quant_pruning_algo_filter), 
-			output_unsigned=int(0),
-                        output_precision=int(os.getenv('QUANTEMU_PRECISION_LSTM_FILTER', 23)),
-                        output_exponent_bits=int(os.getenv('QUANTEMU_EXPBITS', 5)),
-                        channel_blocking_type=int(os.getenv('QUANTEMU_CBLOCK_TYPE_LSTM_FILTER', 0)),
-                        input_channels_per_block=int(os.getenv('QUANTEMU_CBLOCK_SIZE_FILTER', 0)),
-                        round_mode=int(os.getenv('QUANTEMU_RMODE_FILTER', 0)), 
-                        quantize_gradients=int(os.getenv('ENABLE_QUANTGRAD_LSTM_INPUTS', 0)),
-                        gradient_precision=int(os.getenv('QUANTEMU_PRECISION_LSTM_GRAD', 23)),
-                	quantize_gradients_only=int(0) ) 
+                        allocate_copy=int(os.getenv('QUANTEMU_ALLOCATE_COPY_FILTERS', 0)),
+                        data_type=int(os.getenv('QUANTEMU_FILTER_DATA_TYPE', 0)),
+                        precision=int(os.getenv('QUANTEMU_PRECISION_LSTM_FILTERS', 23)),
+                        exponent_bits=int(os.getenv('QUANTEMU_EXPBITS', 5)),
+                        round_mode=int(os.getenv('QUANTEMU_RMODE_FILTERS', 0)), 
+                        quantize_gradients=int(0))
 
       gate_inputs = math_ops.matmul(
           array_ops.concat([inputs_qs, h_qs], 1), kernel_qs)
@@ -812,17 +791,11 @@ class BasicLSTMCell(LayerRNNCell):
       gate_inputs_qs = quantemu_ops.quantize_emu(gate_inputs,
 			data_format='unknown', 
                         allocate_copy=int(os.getenv('QUANTEMU_ALLOCATE_COPY_INPUTS', 0)),
-                        output_data_type=int(os.getenv('QUANTEMU_LPDATA_TYPE', 0)),
-		        pruning_algo=int(0), 
-			output_unsigned=int(0),
-                        output_precision=int(os.getenv('QUANTEMU_PRECISION_LSTM_INPUTS', 23)),
-                        output_exponent_bits=int(os.getenv('QUANTEMU_EXPBITS', 5)),
-                        channel_blocking_type=int(os.getenv('QUANTEMU_CBLOCK_TYPE_LSTM_INPUTS', 0)),
-                        input_channels_per_block=int(os.getenv('QUANTEMU_CBLOCK_SIZE_INPUTS', 0)),
+                        data_type=int(os.getenv('QUANTEMU_INPUT_DATA_TYPE', 0)),
+                        precision=int(os.getenv('QUANTEMU_PRECISION_LSTM_INPUTS', 23)),
+                        exponent_bits=int(os.getenv('QUANTEMU_EXPBITS', 5)),
                         round_mode=int(os.getenv('QUANTEMU_RMODE_INPUTS', 0)), 
-                        quantize_gradients=int(os.getenv('ENABLE_QUANTGRAD_LSTM_INPUTS', 0)),
-                        gradient_precision=int(os.getenv('QUANTEMU_PRECISION_LSTM_GRAD', 23)),
-                	quantize_gradients_only=int(0) ) 
+                        quantize_gradients=int(0))
 
       i, j, f, o = array_ops.split(
         value=gate_inputs_qs, num_or_size_splits=4, axis=one)

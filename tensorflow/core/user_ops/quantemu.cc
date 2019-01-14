@@ -17,20 +17,15 @@ REGISTER_OP("QuantizeEmu")
     .Attr("T: type")
     .Input("to_quantize: T")
     .Output("quantized: T")
-//    .Output("scale: T")
     .Attr("data_format: {'unknown', 'channels_first', 'channels_last'}")
     .Attr("allocate_copy: int = 0") 
-    .Attr("output_data_type: int = 0")
-    .Attr("pruning_algo: int = 0")
-    .Attr("output_unsigned: int = 0")
-    .Attr("output_precision: int = 23")
-    .Attr("output_exponent_bits: int = 5")
+    .Attr("data_type: int = 0")
+    .Attr("precision: int = 23")
+    .Attr("exponent_bits: int = 5")
     .Attr("channel_blocking_type: int = 0")
-    .Attr("input_channels_per_block: int = 0")
+    .Attr("channels_per_block: int = 0")
     .Attr("round_mode: int = 0")
     .Attr("quantize_gradients: int = 0")
-    .Attr("gradient_precision: int = 23")
-    .Attr("quantize_gradients_only: int = 0")
     .SetShapeFn([](::tensorflow::shape_inference::InferenceContext* c) {
       c->set_output(0, c->input(0));
       return Status::OK(); 
@@ -55,7 +50,7 @@ __m256 _mm256_cvtpsph_ps(__m256 reg)
 /* CPU specialization of actual computation. */
 template <typename T>
 struct QuantEmuFunctor<CPUDevice, T> {
-  void operator()(const CPUDevice& d, int pruning_algo, int unsigned_data, int mbits, int rmode, int size, T* in, T* out) {
+  void operator()(const CPUDevice& d, int unsigned_data, int mbits, int rmode, int size, T* in, T* out) {
 
     //std::cout << " *** Inside the QuantEmuFunctor CPU version "<< size  << std::endl; 
     T absmax = 0.0; 
@@ -161,7 +156,7 @@ struct QuantEmuFunctor<CPUDevice, T> {
 /* CPU specialization of actual computation. */
 template <typename T>
 struct BlockC_QuantEmuFunctor<CPUDevice, T> {
-  void operator()(const CPUDevice& d, int pruning_algo, int unsigned_data, int mbits, int *dims, 
+  void operator()(const CPUDevice& d, int unsigned_data, int mbits, int *dims, 
 	int block_size, int rmode, T *in, T *out) {
 
     T *input_flat = in; 
@@ -181,7 +176,6 @@ struct BlockC_QuantEmuFunctor<CPUDevice, T> {
 
             QuantEmuFunctor<CPUDevice, T>()(
                 d,
-                pruning_algo,
                 unsigned_data,
                 mbits, 	
 	        rmode,
@@ -197,7 +191,7 @@ struct BlockC_QuantEmuFunctor<CPUDevice, T> {
 
 template <typename T>
 struct BlockCHW_QuantEmuFunctor<CPUDevice, T> {
-  void operator()(const CPUDevice& d, int pruning_algo, int unsigned_data, int mbits, int *dims, 
+  void operator()(const CPUDevice& d, int unsigned_data, int mbits, int *dims, 
 		int cblock, int rmode, T *in, T *out) {
 
     int chw_blocks =  dims[1]/cblock; 
@@ -216,7 +210,6 @@ struct BlockCHW_QuantEmuFunctor<CPUDevice, T> {
 
         QuantEmuFunctor<CPUDevice, T>()(
                 d,
-          	pruning_algo,
                 unsigned_data,
                 mbits, 	
 	        rmode,
@@ -233,8 +226,7 @@ struct LowpFloatQuantEmuFunctor <CPUDevice, T> {
   void operator()(const CPUDevice& d, int mbits, int exp_bits, int rmode, int size, const T* in, T* out) {
 
     int non_mant_bits = exp_bits + 1; /* exponent + sign */
-    //std::cout << "LowpFloatQuantEmuFunctor, non_mant_bits: " << non_mant_bits << ", mbits: " << mbits 
-    // << ", size: " << size << std::endl;
+    //std::cout << "LowpFloatQuantEmuFunctor, non_mant_bits: " << non_mant_bits << ", mbits: " << mbits  << ", size: " << size << std::endl;
     if (mbits <= non_mant_bits) { printf("LPFP size cannot be <=5\n"); exit (0); }
     int shift = 10 - (mbits - non_mant_bits);
     unsigned short lowpfp_mask = (unsigned short)(0xFFFF << shift);
@@ -272,17 +264,13 @@ class QuantEmuOp : public OpKernel {
     /* aquire the OP attributes */ 
     OP_REQUIRES_OK(context, context->GetAttr("data_format", &data_format_));
     OP_REQUIRES_OK(context, context->GetAttr("allocate_copy", &allocate_copy_));
-    OP_REQUIRES_OK(context, context->GetAttr("output_data_type", &lpdata_type_));
-    OP_REQUIRES_OK(context, context->GetAttr("pruning_algo", &pruning_algo_));
-    OP_REQUIRES_OK(context, context->GetAttr("output_unsigned", &unsigned_data_));
-    OP_REQUIRES_OK(context, context->GetAttr("output_precision", &mbits_));
-    OP_REQUIRES_OK(context, context->GetAttr("output_exponent_bits", &exponent_bits_));
+    OP_REQUIRES_OK(context, context->GetAttr("data_type", &lpdata_type_));
+    OP_REQUIRES_OK(context, context->GetAttr("precision", &mbits_));
+    OP_REQUIRES_OK(context, context->GetAttr("exponent_bits", &exponent_bits_));
     OP_REQUIRES_OK(context, context->GetAttr("channel_blocking_type", &block_type_));
-    OP_REQUIRES_OK(context, context->GetAttr("input_channels_per_block", &block_size_));
+    OP_REQUIRES_OK(context, context->GetAttr("channels_per_block", &block_size_));
     OP_REQUIRES_OK(context, context->GetAttr("round_mode", &round_mode_));
     OP_REQUIRES_OK(context, context->GetAttr("quantize_gradients", &quantize_grad_));
-    OP_REQUIRES_OK(context, context->GetAttr("gradient_precision", &grad_mbits_));
-    OP_REQUIRES_OK(context, context->GetAttr("quantize_gradients_only", &quantize_grad_only_));
 
     //std::cout << "data_format : " << data_format_ << ", lpdata_type: " << lpdata_type_ << ", mbits_: " << mbits_ << 
     // ", exponent_bits_: " << exponent_bits_ << ", quantize_grad_: " << quantize_grad_ << ", mbits_grad_ : " << mbits_grad_ << 
@@ -309,9 +297,6 @@ class QuantEmuOp : public OpKernel {
       poutput_tensor = &output_tensor; 
     }
 
-    /* this op is used for quantizing gradients only -- forward pass just returns the same tensor */ 
-    if (quantize_grad_only_ == 1) return;
-    
     /* Do the computation. */
     OP_REQUIRES(context, input_tensor.NumElements() <= tensorflow::kint32max,
                 errors::InvalidArgument("Too many elements in tensor"));
@@ -319,7 +304,8 @@ class QuantEmuOp : public OpKernel {
                 errors::InvalidArgument("Input tensor shape consists of more than 4 dimentions"));
 
     switch (lpdata_type_) {
-      case DFP_INT: 
+      case INT: 
+      case UINT: 
       {
         switch (block_type_ ) 
         {
@@ -327,8 +313,7 @@ class QuantEmuOp : public OpKernel {
           { 
             QuantEmuFunctor<Device, T>()(
               context->eigen_device<Device>(),
-              pruning_algo_, 
-              unsigned_data_,
+              (lpdata_type_ == UINT)?1:0, 
               mbits, 	
 	      round_mode_,
               static_cast<int>(input_tensor.NumElements()),
@@ -348,8 +333,7 @@ class QuantEmuOp : public OpKernel {
 
             BlockC_QuantEmuFunctor<Device, T>()(
 	      context->eigen_device<Device>(), 
-              pruning_algo_, 
-              unsigned_data_,
+              (lpdata_type_ == UINT)?1:0, 
 	      mbits, 
 	      dims, 
               block_size_, 
@@ -371,8 +355,7 @@ class QuantEmuOp : public OpKernel {
 
             BlockCHW_QuantEmuFunctor<Device, T>()(
 	      context->eigen_device<Device>(), 
-              pruning_algo_, 
-              unsigned_data_,
+              (lpdata_type_ == UINT)?1:0, 
 	      mbits, 
 	      dims,
               block_size_, 
@@ -419,16 +402,12 @@ class QuantEmuOp : public OpKernel {
   string data_format_;
   int allocate_copy_;
   int lpdata_type_;
-  int pruning_algo_;
-  int unsigned_data_;
   int mbits_;
   int exponent_bits_;
   int block_type_;   
   int block_size_;
   int round_mode_;
   int quantize_grad_;
-  int grad_mbits_;
-  int quantize_grad_only_;
 };
 
 template class QuantEmuOp<CPUDevice, float>; 

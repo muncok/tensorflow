@@ -6,7 +6,7 @@ using namespace tensorflow;
 
 enum ROUND_MODE{NOROUND=0, BIASED, NEAREST};
 enum FGQ_TYPE{NOBLOCK=0, BLOCK_C, BLOCK_CHW };
-enum LPDATA_TYPE{DFP_INT=1, LOWP_FP, POSIT, BLOCK_FP};
+enum LPDATA_TYPE{INT=1, UINT=2, LOWP_FP=3, POSIT=4, BLOCK_FP=5};
 
 using CPUDevice = Eigen::ThreadPoolDevice;
 using GPUDevice = Eigen::GpuDevice;
@@ -25,17 +25,17 @@ typedef union ufloat32
 
 template <typename Device, typename T>
 struct QuantEmuFunctor {
-  void operator()(const Device& d, int pruning_algo, int unsigned_data, int mbits, int rmode, int size, T* in, T* out);
+  void operator()(const Device& d, int unsigned_data, int mbits, int rmode, int size, T* in, T* out);
 };
 
 template <typename Device, typename T>
 struct BlockC_QuantEmuFunctor {
-  void operator()(const Device& d, int pruning_algo, int unsigned_data, int mbits, int *dims, int block_size, int rmode, T* in, T* out);
+  void operator()(const Device& d, int unsigned_data, int mbits, int *dims, int block_size, int rmode, T* in, T* out);
 };
 
 template <typename Device, typename T>
 struct BlockCHW_QuantEmuFunctor {
-  void operator()(const Device& d, int pruning_algo, int unsigned_data, int mbits, int *dims, int block_size, int rmode, T *in, T *out);
+  void operator()(const Device& d, int unsigned_data, int mbits, int *dims, int block_size, int rmode, T *in, T *out);
 };
 
 template <typename Device, typename T>

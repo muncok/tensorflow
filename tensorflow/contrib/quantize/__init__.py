@@ -29,6 +29,7 @@ _allowed_symbols = [
     "create_training_graph",
     "experimental_create_eval_graph",
     "experimental_create_training_graph",
+    "quantemu_create_training_graph",
 ]
 
 remove_undocumented(__name__, _allowed_symbols)

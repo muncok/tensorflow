@@ -39,6 +39,9 @@ from tensorflow.python.platform import tf_logging as logging
 from tensorflow.python.training import distribution_strategy_context
 from tensorflow.python.util.tf_export import tf_export
 
+import os
+from tensorflow.python.ops import quantemu_ops
+
 
 @tf_export('keras.layers.BatchNormalization')
 class BatchNormalization(Layer):
@@ -492,6 +495,27 @@ class BatchNormalization(Layer):
     return (r, d, new_mean, new_variance)
 
   def call(self, inputs, training=None):
+
+    enable_quantop_bnorm = int(os.getenv('ENABLE_QUANTOP_BNORM', 0))
+    dformat = 'channels_last'
+    if self._data_format == b'NCHW':
+      dformat = 'channels_firtst'
+    elif self._data_format == b'None':
+      dformat = 'unknown'
+
+    if enable_quantop_bnorm == 1 : 
+      inputs = quantemu_ops.quantize_emu(inputs,
+		data_format=dformat, 
+		allocate_copy=int(0), 
+                data_type=int(os.getenv('QUANTEMU_INPUT_DATA_TYPE', 0)),
+                precision=int(os.getenv('QUANTEMU_PRECISION_BNORM_INPUTS', 23)), 
+                exponent_bits=int(os.getenv('QUANTEMU_EXPBITS', 5)),
+                channel_blocking_type=int(os.getenv('QUANTEMU_CBLOCK_TYPE_BNORM_INPUTS', 0)),
+                channels_per_block=int(os.getenv('QUANTEMU_CBLOCK_SIZE_INPUTS', 0)),
+                round_mode=int(os.getenv('QUANTEMU_RMODE_INPUTS', 0)), 
+                quantize_gradients=int(0))
+   
+
     original_training_value = training
     if training is None:
       training = K.learning_phase()

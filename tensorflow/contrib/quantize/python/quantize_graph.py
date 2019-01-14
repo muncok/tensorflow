@@ -76,6 +76,73 @@ def _create_graph(input_graph=None,
         activation_bits=activation_bits,
         scope=scope)
 
+def _create_graph_custom(input_graph=None,
+                  is_training=True,
+                  data_type=1,
+                  quantize_gradients=False,
+                  weight_bits=8,
+                  activation_bits=8,
+                  gradient_bits=8,
+                  channel_blocking=0, 
+                  channels_per_block=0,
+                  quant_delay=None,
+                  freeze_bn_delay=None,
+                  scope=None):
+  """Rewrites an input_graph in place for simulated quantization.
+
+  The graph has fake quantization ops inserted to simulate the error
+  introduced by quantization. Since the graph is transformed in place,
+  the expected behavior of previously held references to nodes and tensors may
+  change.
+
+  Args:
+    input_graph: The tf.Graph to be transformed, if None then defaults to the
+      default graph.
+    is_training: Whether quantizing training or eval graph.
+    data_type: Quantized data type.
+    quantize_gradients: Quantize gradients too. defaults to False 
+    weight_bits: Number of bits to use for quantizing weights.
+    activation_bits: Number of bits to use for quantizing activations.
+    gradient_bits: Number of bits to use for quantizing gradients.
+    quant_delay: Number of steps after which weights and activations are
+      quantized during training.
+    freeze_bn_delay: Number of steps after which moving mean and variance are
+      frozen and used instead of batch statistics during training.
+      freeze_bn_delay should be greater than quant_delay and should correspond
+      to the number of steps when training has almost converged
+    scope: The scope to be transformed. If it's not None, only the ops which
+      are in this scope will be transformed.
+
+  Raises:
+    ValueError: If elements contains an element that isn't a tf.Tensor or
+      tf.Operation.
+  """
+
+  if input_graph is None:
+    input_graph = ops.get_default_graph()
+
+  # Add check to see if graph has training ops, if so provide error message and
+  # exit
+  _check_for_training_ops(input_graph)
+  with input_graph.as_default():
+    """    
+    fold_batch_norms.FoldBatchNorms(
+        input_graph,
+        freeze_batch_norm_delay=freeze_bn_delay,
+        is_training=is_training)
+    """
+    quantize.Quantize_custom(
+        input_graph,
+        is_training,
+        quant_delay=quant_delay,
+        data_type=data_type,
+        quantize_gradients=quantize_gradients,
+        weight_bits=weight_bits,
+        activation_bits=activation_bits,
+        gradient_bits=gradient_bits,
+        channel_blocking=channel_blocking, 
+        channels_per_block=channels_per_block,
+        scope=scope)
 
 def create_training_graph(input_graph=None, quant_delay=0):
   """Rewrites a training input_graph in place for simulated quantization.
@@ -196,6 +263,71 @@ def experimental_create_training_graph(input_graph=None,
       freeze_bn_delay=freeze_bn_delay,
       scope=scope)
 
+
+def quantemu_create_training_graph(input_graph=None,
+                                   data_type=1,
+                                   quantize_gradients=False,
+                                   weight_bits=8,
+                                   activation_bits=8,
+                                   gradient_bits=8,
+                                   quant_delay=0,
+                                   freeze_bn_delay=None,
+                                   scope=None):
+  """Rewrites a training input_graph in place for simulated quantization.
+
+  This function must be invoked prior to insertion of gradient ops in a graph
+  as quantization should be modeled in both forward and backward passes.
+
+  Variables added by the rewrite get added to the global variables collection.
+
+  This function has additional experimental options not (yet) available to
+  create_training_graph. The resulting behavior may be undefined.
+
+  The graph has fake quantization ops inserted to simulate the error
+  introduced by quantization. Since the graph is transformed in place,
+  the expected behavior of previously held references to nodes and tensors may
+  change.
+
+  The default value of quant_delay is suitable for finetuning an already trained
+  floating point model (recommended).
+  If one wants to train a quantized model from scratch, quant_delay should be
+  set to the number of steps it take the floating point model to converge.
+  Quantization will be activated at this point and effectively finetune the
+  model. If quant_delay is not provided when training from scratch, training can
+  often fail.
+
+  Args:
+    input_graph: The tf.Graph to be transformed, if None then defaults to the
+      default graph.
+    data_type: Quantized data type. 1=INT, 2=FPxx, 2=Posit, defaults to '1'  
+    quantize_gradients: Quantize gradients too, defaults to 'False' 
+    weight_bits: Number of bits to use for quantizing weights.
+    activation_bits: Number of bits to use for quantizing activations.
+    quant_delay: Number of steps after which weights and activations are
+      quantized during training.
+    freeze_bn_delay: Number of steps after which moving mean and variance are
+      frozen and used instead of batch statistics during training.
+      freeze_bn_delay should be greater than quant_delay and should correspond
+      to when training has almost converged
+    scope: The scope to be transformed. If it's not None, only the ops which
+      are in this scope will be transformed.
+
+  Raises:
+    ValueError: If elements contains an element that isn't a tf.Tensor or
+        tf.Operation.
+  """
+
+  _create_graph_custom(
+      input_graph=input_graph,
+      is_training=True,
+      data_type=data_type,
+      quantize_gradients=quantize_gradients,
+      weight_bits=weight_bits,
+      activation_bits=activation_bits,
+      gradient_bits=gradient_bits,
+      quant_delay=quant_delay,
+      freeze_bn_delay=freeze_bn_delay,
+      scope=scope)
 
 def experimental_create_eval_graph(input_graph=None,
                                    weight_bits=8,

@@ -29,6 +29,8 @@ from tensorflow.python.ops import gen_array_ops
 from tensorflow.python.ops import gen_math_ops
 from tensorflow.python.ops import math_ops
 
+import os
+from tensorflow.python.ops import quantemu_ops
 
 def _safe_shape_div(x, y):
   """Divides `x / y` assuming `x, y >= 0`, treating `0 / 0 = 0`."""
@@ -1126,6 +1128,34 @@ def _MatMulGrad(op, grad):
   t_b = op.get_attr("transpose_b")
   a = math_ops.conj(op.inputs[0])
   b = math_ops.conj(op.inputs[1])
+
+  enable_quantop_matmul = int(os.getenv('ENABLE_QUANTOP_MATMUL', 0))
+  enable_quantop_matmul_grad = int(os.getenv('ENABLE_QUANTOP_MATMUL_GRAD', 0))
+  if enable_quantop_matmul_grad == 1: 
+     grad = quantemu_ops.quantize_emu(grad,
+		data_format='unknown', 
+                allocate_copy=int(os.getenv('QUANTEMU_ALLOCATE_COPY_GRADS', 0)),
+                data_type=int(os.getenv('QUANTEMU_GRAD_DATA_TYPE', 0)),
+                precision=int(os.getenv('QUANTEMU_PRECISION_MATMUL_GRADS', 23)),
+                exponent_bits=int(os.getenv('QUANTEMU_EXPBITS', 5)),
+                round_mode=int(os.getenv('QUANTEMU_RMODE_GRADS', 0))) 
+
+  if enable_quantop_matmul == 1: 
+     a = quantemu_ops.quantize_emu(a,
+		data_format='unknown', 
+                allocate_copy=int(os.getenv('QUANTEMU_ALLOCATE_COPY_INPUTS', 0)),
+                data_type=int(os.getenv('QUANTEMU_INPUT_DATA_TYPE', 0)),
+                precision=int(os.getenv('QUANTEMU_PRECISION_MATMUL_INPUTS', 23)),
+                exponent_bits=int(os.getenv('QUANTEMU_EXPBITS', 5)),
+                round_mode=int(os.getenv('QUANTEMU_RMODE_INPUTS', 0))) 
+     b = quantemu_ops.quantize_emu(b,
+		data_format='unknown', 
+                allocate_copy=int(os.getenv('QUANTEMU_ALLOCATE_COPY_FILTERS', 0)),
+                data_type=int(os.getenv('QUANTEMU_FILTER_DATA_TYPE', 0)),
+                precision=int(os.getenv('QUANTEMU_PRECISION_MATMUL_FILTERS', 23)),
+                exponent_bits=int(os.getenv('QUANTEMU_EXPBITS', 5)),
+                round_mode=int(os.getenv('QUANTEMU_RMODE_FILTERS', 0))) 
+
   if not t_a and not t_b:
     grad_a = gen_math_ops.mat_mul(grad, b, transpose_b=True)
     grad_b = gen_math_ops.mat_mul(a, grad, transpose_a=True)

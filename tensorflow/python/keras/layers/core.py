@@ -23,7 +23,6 @@ import sys
 import types as python_types
 import warnings
 import os
-from tensorflow.python.ops import quantemu_ops
 import numpy as np
 
 from tensorflow.python.eager import context
@@ -958,39 +957,6 @@ class Dense(Layer):
 
   def call(self, inputs):
     inputs = ops.convert_to_tensor(inputs, dtype=self.dtype)
-
-    quantop_input = int(os.getenv('ENABLE_QUANTOP_DENSE_INPUTS', 0))
-    quantop_output = int(os.getenv('ENABLE_QUANTOP_DENSE_OUTPUTS', 0))
-   
-    if quantop_input == 1 : 
-      inputs_qs = quantemu_ops.quantize_emu(inputs,
-		    data_format='unknown', 
-		    allocate_copy=int(os.getenv('QUANTEMU_ALLOCATE_COPY_INPUTS', 0)), 
-                    output_data_type=int(os.getenv('QUANTEMU_LPDATA_TYPE', 0)),
-                    pruning_algo=int(0),
-		    output_unsigned=int(0),
-                    output_precision=int(os.getenv('QUANTEMU_PRECISION_DENSE_INPUTS', 23)),
-                    output_exponent_bits=int(os.getenv('QUANTEMU_EXPBITS', 5)),
-                    channel_blocking_type=int(os.getenv('QUANTEMU_CBLOCK_TYPE_DENSE_INPUTS', 0)),
-                    input_channels_per_block=int(os.getenv('QUANTEMU_CBLOCK_SIZE_INPUTS', 0)),
-                    round_mode=int(os.getenv('QUANTEMU_RMODE_INPUTS', 0)), 
-                    quantize_gradients=int(os.getenv('ENABLE_QUANTGRAD_DENSE_INPUTS', 0)),
-                    quantize_gradients_only=int(0) ) 
-
-      kernel_qs = quantemu_ops.quantize_emu(self.kernel,
-		    data_format='unknown', 
-		    allocate_copy=int(os.getenv('QUANTEMU_ALLOCATE_COPY_FILTER', 0)), 
-                    output_data_type=int(os.getenv('QUANTEMU_LPDATA_TYPE', 0)),
-                    pruning_algo=int(0),
-		    output_unsigned=int(0),
-                    output_precision=int(os.getenv('QUANTEMU_PRECISION_DENSE_FILTER', 23)),
-                    output_exponent_bits=int(os.getenv('QUANTEMU_EXPBITS', 5)),
-                    channel_blocking_type=int(os.getenv('QUANTEMU_CBLOCK_TYPE_DENSE_FILTER', 0)),
-                    input_channels_per_block=int(os.getenv('QUANTEMU_CBLOCK_SIZE_FILTER', 0)),
-                    round_mode=int(os.getenv('QUANTEMU_RMODE_FILTER', 0)), 
-                    quantize_gradients=int(0), 
-                    quantize_gradients_only=int(0) ) 
-
     rank = common_shapes.rank(inputs)
     if rank > 2:
       # Broadcasting is required for the inputs.

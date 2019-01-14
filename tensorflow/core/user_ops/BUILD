@@ -1,6 +1,20 @@
 load("//tensorflow:tensorflow.bzl", "tf_custom_op_library")
 
 tf_custom_op_library(
+    name = "mimiquant.so",
+    srcs = ["mimiquant.cc"],
+    gpu_srcs = ["mimiquant.cu.cc"],
+    deps = [":mimiquantdeps"],
+    linkopts = ["-fopenmp"],
+)
+
+cc_library(
+    name = "mimiquantdeps",
+    srcs = ["mimiquant.h", "posit_types.h"],
+    visibility = ["//visibility:public"],
+)
+
+tf_custom_op_library(
     name = "quantemu.so",
     srcs = ["quantemu.cc"],
     gpu_srcs = ["quantemu.cu.cc"],

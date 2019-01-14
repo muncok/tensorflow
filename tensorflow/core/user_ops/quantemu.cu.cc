@@ -672,7 +672,7 @@ void QuantEmuPositCudaKernel(
 /* Define the GPU implementation that launches the CUDA kernel. */
 template <typename T>
 struct QuantEmuFunctor<GPUDevice, T> { 
-  void operator()(const GPUDevice& d, int pruning_algo, int unsigned_data, int mbits, int rmode, int size, T* in, T* out) {
+  void operator()(const GPUDevice& d, int unsigned_data, int mbits, int rmode, int size, T* in, T* out) {
     int block = CUBLOCK_SIZE; 
     int grid = (size + (CUBLOCK_SIZE -1))/CUBLOCK_SIZE;  
     T *d_absmax;
@@ -687,17 +687,6 @@ struct QuantEmuFunctor<GPUDevice, T> {
     cudaMemset(&d_min, 0, sizeof(T));
     cudaMemset(&d_max, 0, sizeof(T));
     cudaMemset(&d_sum, 0, sizeof(float));
-#if 0
-    if (pruning_algo == 0) { 
-      max_reduce<<<grid, block, block*sizeof(float), d.stream()>>>(in, d_absmax, 0, size); 
-    } else { 
-      min_max_reduce<<<grid, block, 2*block*sizeof(float), d.stream()>>>(in, d_min, d_max, 0, size); 
-      reduce_interquartile_sum<<<grid, block, block*sizeof(float), d.stream()>>>(in, d_sum, d_min, d_max, 0, size); 
-      estimate_mode_range <<<grid, block, 0, d.stream()>>>(d_absmax, d_sum, d_min, d_max, size);
-    }
-    //cudaMemcpy(&absmax, d_absmax, sizeof(T), cudaMemcpyDeviceToHost); 
-    QuantEmuCudaKernel <<<grid, block, 0, d.stream()>>>(mbits, d_absmax, rmode, 0, size, in, out);
-#endif 
     if(unsigned_data) {
       min_max_reduce<<<grid, block, 2*block*sizeof(float), d.stream()>>>(in, d_min, d_max, 0, size); 
       QuantEmuCudaKernel_Unsigned <<<grid, block, 0, d.stream()>>>(mbits, d_max, d_min, rmode, 0, size, in, out);
@@ -717,7 +706,7 @@ template struct QuantEmuFunctor<GPUDevice, Eigen::half>;
 
 template <typename T>
 struct BlockC_QuantEmuFunctor<GPUDevice, T> {
-  void operator()(const GPUDevice& d, int pruning_algo, int unsigned_data, int mbits, int *dims , 
+  void operator()(const GPUDevice& d, int unsigned_data, int mbits, int *dims , 
 	int block_size, int rmode, T *in, T *out) {
 
     int c_blocks =  dims[3]/block_size; 
@@ -753,25 +742,6 @@ struct BlockC_QuantEmuFunctor<GPUDevice, T> {
           cudaMemset(&d_min[k], 0, sizeof(T));
           cudaMemset(&d_max[k], 0, sizeof(T));
           cudaMemset(&d_sum[k], 0, sizeof(float));
-#if 0
-          if (pruning_algo == 0) { 
-            max_reduce<<<grid, block, block*sizeof(float), streams[k]>>>(input_flat, &d_absmax[k], block_offset, block_size); 
- 	  } else {
-            min_max_reduce<<<grid, block, 2*block*sizeof(float), streams[k]>>>(input_flat, &d_min[k], &d_max[k], 
-				block_offset, block_size); 
-            reduce_interquartile_sum<<<grid, block, block*sizeof(float), streams[k]>>>(input_flat, &d_sum[k], 
-				&d_min[k], &d_max[k], block_offset, block_size); 
-	    estimate_mode_range <<<grid, block, 0, streams[k]>>>(&d_absmax[k], &d_sum[k], &d_min[k], &d_max[k], block_size);
-	  }
-          QuantEmuCudaKernel <<<grid, block, 0, streams[k]>>>(
-					mbits, 
-					&d_absmax[k], 
-					rmode, 
-					block_offset, 
-					block_size, 
-					input_flat, 
-					output_flat);
-#endif 
           if (unsigned_data) {
             min_max_reduce<<<grid, block, 2*block*sizeof(float), streams[k]>>>(input_flat, &d_min[k], &d_max[k], 
 				block_offset, block_size); 
@@ -812,7 +782,7 @@ template struct BlockC_QuantEmuFunctor<GPUDevice, Eigen::half>;
 
 template <typename T>
 struct BlockCHW_QuantEmuFunctor<GPUDevice, T> {
-  void operator()(const GPUDevice& d, int pruning_algo, int unsigned_data, int mbits, int *dims, 
+  void operator()(const GPUDevice& d, int unsigned_data, int mbits, int *dims, 
 	int cblock_size, int rmode, T *in, T *out) {
 
     int chw_blocks =  dims[1]/cblock_size; 
@@ -847,25 +817,7 @@ struct BlockCHW_QuantEmuFunctor<GPUDevice, T> {
           cudaMemset(&d_min[k], 0, sizeof(T));
           cudaMemset(&d_max[k], 0, sizeof(T));
           cudaMemset(&d_sum[k], 0, sizeof(float));
-#if 0
-          if (pruning_algo == 0) { 
-            max_reduce<<<grid, block, block*sizeof(float), streams[k]>>>(input_flat, &d_absmax[k], block_offset, block_size); 
- 	  } else {
-            min_max_reduce<<<grid, block, 2*block*sizeof(float), streams[k]>>>(input_flat, &d_min[k], &d_max[k], 
-					block_offset, block_size); 
-            reduce_interquartile_sum<<<grid, block, block*sizeof(float), streams[k]>>>(input_flat, 
-					&d_sum[k], &d_min[k], &d_max[k], block_offset, block_size); 
-	    estimate_mode_range <<<grid, block, 0, streams[k]>>>(&d_absmax[k], &d_sum[k], &d_min[k], &d_max[k], block_size);
-   	  }
-          QuantEmuCudaKernel <<<grid, block, 0, streams[k]>>>(
-					mbits, 
-					&d_absmax[k], 
-					rmode, 
-					block_offset, 
-					block_size, 
-					input_flat, 
-					output_flat);
-#endif 
+
           if (unsigned_data) { 
             min_max_reduce<<<grid, block, 2*block*sizeof(float), streams[k]>>>(input_flat, &d_min[k], &d_max[k], 
 					block_offset, block_size); 
