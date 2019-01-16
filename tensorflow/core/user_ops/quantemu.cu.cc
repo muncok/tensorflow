@@ -573,8 +573,10 @@ void QuantEmuLowpCudaKernel(
 	float *out) 
 {
   int non_mant_bits = exp_bits + 1; /* exponent + sign */
-  int shift = 10 - (mbits - non_mant_bits);
-  unsigned short lowpfp_mask = (unsigned short)(0xFFFF << shift);
+  int mshift = 10 - (mbits - non_mant_bits);
+  int rshift = mshift - 3; 
+  unsigned short lowpfp_mask = (unsigned short)(0xFFFF << mshift);
+  unsigned short GRS_mask = ~lowpfp_mask;
 
   __half_t eps_base; 
   eps_base.f = __float2half(0.125); 
@@ -595,6 +597,10 @@ void QuantEmuLowpCudaKernel(
 #endif 
       /* truncation */ 
       h.u = (h.u & lowpfp_mask); 
+      /* round to nearest even */ 
+      unsigned short m = ((h.u & GRS_mask) >> rshift);  
+      h.u += ((m > 0x100) << mshift); 
+
       float outval = __half2float(h.f);
       out[gid] = outval;
   }
@@ -610,8 +616,11 @@ void QuantEmuLowpCudaKernel(
 	Eigen::half* out) 
 {
   int non_mant_bits = exp_bits + 1; /* exponent + sign */
-  int shift = 10 - (mbits - non_mant_bits);
-  unsigned short lowpfp_mask = (unsigned short)(0xFFFF << shift);
+  int mshift = 10 - (mbits - non_mant_bits);
+  int rshift = mshift - 3; 
+  unsigned short lowpfp_mask = (unsigned short)(0xFFFF << mshift);
+  unsigned short GRS_mask = ~lowpfp_mask;
+
   __half_t eps_base; 
   eps_base.f = __float2half(0.125); 
   unsigned int eps_base_exp = eps_base.parts.exponent - 15; 
@@ -631,6 +640,10 @@ void QuantEmuLowpCudaKernel(
 #endif 
       /* truncation */ 
       h.u = (h.u & lowpfp_mask); 
+      /* round to nearest even */ 
+      unsigned short m = ((h.u & GRS_mask) >> rshift);  
+      h.u += ((m > 0x100) << mshift); 
+
       Eigen::half outval = h.f; 
       out[gid] = outval;
   }
