@@ -20,6 +20,7 @@ from __future__ import division
 from __future__ import print_function
 
 import os
+import tensorflow as tf 
 from tensorflow.python.ops import quantemu_ops
 
 from tensorflow.python.eager import context
@@ -245,6 +246,7 @@ class Conv(Layer):
                 round_mode=int(os.getenv('QUANTEMU_RMODE_FILTERS', 0)), 
                 quantize_gradients=int(0)) 
 
+      tf.add_to_collection (name='QUANTIZED_VARIABLES', value=tf.identity(kernel_qs, 'quant_kernel'))
       outputs = self._convolution_op(inputs_qs, kernel_qs)
 
     else :

@@ -573,36 +573,39 @@ void QuantEmuLowpCudaKernel(
 	float *out) 
 {
   int non_mant_bits = exp_bits + 1; /* exponent + sign */
-  int mshift = 10 - (mbits - non_mant_bits);
-  int rshift = mshift - 3; 
-  unsigned short lowpfp_mask = (unsigned short)(0xFFFF << mshift);
-  unsigned short GRS_mask = ~lowpfp_mask;
-  unsigned short lastbit_mask = ~lowpfp_mask | (0x1 << mshift);
+  int lshift = 10 - (mbits - non_mant_bits);
+  int rshift = lshift - 3; /* shift to preserve rounding bits */ 
+  int exp_max = (0x1 << exp_bits-1) - 1; 
+  int exp_min = 1 - exp_max; 
 
-  __half_t eps_base; 
-  eps_base.f = __float2half(0.125); 
-  unsigned int eps_base_exp = eps_base.parts.exponent - 15; 
+  unsigned short mask_mant = (unsigned short)(0xFFFF << lshift);
+  unsigned short mask_mant_grs = (unsigned short)(0xFFFF << rshift);
+   /* mask to extract G(gaurd), R (round), S (sticky) bits */ 
+  unsigned short lsbGRS = 0xF << rshift; 
 
   for (int gid = (blockIdx.x * blockDim.x) + threadIdx.x; gid < size; gid += blockDim.x * gridDim.x) {
       __half_t h; 
       float inval = in[gid];
       __half  hval = __float2half_rn(inval); 
       h.f = hval;
-#if 0
-      /* compute rounding epsilon*/ 
-      unsigned int val_exp = h.parts.exponent - 15; 
-      eps_base.parts.exponent = eps_base_exp + val_exp + 15;
-      eps_base.parts.sign = h.parts.sign;
-      /* apply rounding */ 
-      h.f += eps_base.f; 
-#endif 
+     
+      unsigned short mant_grs = (h.u & mask_mant_grs); 
       /* truncation */ 
-      h.u = (h.u & lowpfp_mask); 
+      h.u = (h.u & mask_mant); 
       /* round to nearest even */ 
-      unsigned short m = ((h.u & GRS_mask) >> rshift);  
-      unsigned short lb = ((h.u & lastbit_mask) >> rshift);  
-      h.u += (((m > 0x100) || (lb == 0xC) ) << mshift); 
-
+      unsigned short rmask_tie = ((mant_grs & lsbGRS) >> rshift);  
+      unsigned short rmask = (rmask_tie & 0x7);  
+      h.u += (((rmask > 0x4) || (rmask_tie == 0xC) ) << lshift); 
+#if 0 /* revisit this later TBD */ 
+      /* exponent handling */ 
+      int new_exp = (h.parts.exponent - 15); 
+      new_exp = min (exp_max, new_exp);
+      new_exp = max (exp_min, new_exp);
+      h.parts.exponent = new_exp + 15; 
+      /* flush denormals to zero */ 
+      if (((h.u & 0x7C00) >> 10 ) == 0) h.f = 0.0; 
+#endif 
+ 
       float outval = __half2float(h.f);
       out[gid] = outval;
   }
@@ -618,35 +621,40 @@ void QuantEmuLowpCudaKernel(
 	Eigen::half* out) 
 {
   int non_mant_bits = exp_bits + 1; /* exponent + sign */
-  int mshift = 10 - (mbits - non_mant_bits);
-  int rshift = mshift - 3; 
-  unsigned short lowpfp_mask = (unsigned short)(0xFFFF << mshift);
-  unsigned short GRS_mask = ~lowpfp_mask;
-  unsigned short lastbit_mask = ~lowpfp_mask | (0x1 << mshift);
+  int lshift = 10 - (mbits - non_mant_bits);
+  int rshift = lshift - 3; /* shift to preserve rounding bits */ 
+  int exp_max = (0x1 << exp_bits-1) - 1; 
+  int exp_min = 1 - exp_max; 
 
-  __half_t eps_base; 
-  eps_base.f = __float2half(0.125); 
-  unsigned int eps_base_exp = eps_base.parts.exponent - 15; 
+  unsigned short mask_mant = (unsigned short)(0xFFFF << lshift);
+  unsigned short mask_mant_grs = (unsigned short)(0xFFFF << rshift);
+   /* mask to extract G(gaurd), R (round), S (sticky) bits */ 
+  unsigned short lsbGRS = 0xF << rshift; 
 
   for (int gid = (blockIdx.x * blockDim.x) + threadIdx.x; gid < size; gid += blockDim.x * gridDim.x) {
       __half_t h; 
       Eigen::half inval = in[gid];
       __half  hval = inval; 
       h.f = hval;
-#if 0
-      /* compute rounding epsilon*/ 
-      unsigned int val_exp = h.parts.exponent - 15; 
-      eps_base.parts.exponent = eps_base_exp + val_exp + 15;
-      eps_base.parts.sign = h.parts.sign;
-      /* apply rounding */ 
-      h.f += eps_base.f; 
-#endif 
+
+
+      unsigned short mant_grs = (h.u & mask_mant_grs); 
       /* truncation */ 
-      h.u = (h.u & lowpfp_mask); 
+      h.u = (h.u & mask_mant); 
       /* round to nearest even */ 
-      unsigned short m = ((h.u & GRS_mask) >> rshift);  
-      unsigned short lb = ((h.u & lastbit_mask) >> rshift);  
-      h.u += (((m > 0x100) || (lb == 0xC) ) << mshift); 
+      unsigned short rmask_tie = ((mant_grs & lsbGRS) >> rshift);  
+      unsigned short rmask = (rmask_tie & 0x7);  
+      h.u += (((rmask > 0x4) || (rmask_tie == 0xC) ) << lshift); 
+
+#if 0 /* revisit this later TBD */ 
+      /* exponent handling */ 
+      int new_exp = (h.parts.exponent - 15); 
+      new_exp = min (exp_max, new_exp);
+      new_exp = max (exp_min, new_exp);
+      h.parts.exponent = new_exp + 15; 
+      /* flush denormals to zero */ 
+      if (((h.u & 0x7C00) >> 10 ) == 0) h.f = 0.0; 
+#endif 
 
       Eigen::half outval = h.f; 
       out[gid] = outval;
