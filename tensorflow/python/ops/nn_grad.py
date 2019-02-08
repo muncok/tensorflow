@@ -512,10 +512,10 @@ def _Conv2DGrad(op, grad):
   enable_quantop_input = int(os.getenv('ENABLE_QUANTOP_CONV', 0))
 
   dformat = 'channels_last' 
-  inp_channels = op.inputs[1].get_shape()[3].value
+  inp_channels = op.inputs[0].get_shape()[3].value
   if data_format == b'NCHW' :  
      dformat = 'channels_first'
-     inp_channels = op.inputs[1].get_shape()[1].value 
+     inp_channels = op.inputs[0].get_shape()[1].value 
   elif data_format == b'None' :
      dformat = 'unknown'
 
@@ -538,7 +538,7 @@ def _Conv2DGrad(op, grad):
                 round_mode=int(os.getenv('QUANTEMU_RMODE_GRADS', 0))) 
 
   if enable_quantop_input == 1: 
-     acts = quantemu_ops.quantize_emu(op.inputs[1],
+     acts = quantemu_ops.quantize_emu(op.inputs[0],
 		data_format=dformat, 
                 data_type=int(os.getenv('QUANTEMU_INPUT_DATA_TYPE', 0)),
                 precision=quant_input_precision, #int(os.getenv('QUANTEMU_PRECISION_CONV_INPUTS', 23)),
@@ -546,7 +546,7 @@ def _Conv2DGrad(op, grad):
                 channel_blocking_type=int(os.getenv('QUANTEMU_CBLOCK_TYPE_CONV_INPUTS', 0)),
                 channels_per_block=int(os.getenv('QUANTEMU_CBLOCK_SIZE_INPUTS', 0)),
                 round_mode=int(os.getenv('QUANTEMU_RMODE_INPUTS', 0))) 
-     filters = quantemu_ops.quantize_emu(op.inputs[0],
+     filters = quantemu_ops.quantize_emu(op.inputs[1],
 		data_format=dformat, 
 		allocate_copy=int(os.getenv('QUANTEMU_ALLOCATE_COPY_FILTERS', 0)), 
                 data_type=int(os.getenv('QUANTEMU_FILTER_DATA_TYPE', 0)),
@@ -559,7 +559,7 @@ def _Conv2DGrad(op, grad):
          nn_ops.conv2d_backprop_input(
              shape_0,
              #op.inputs[1],
-             acts,
+             filters,
              grad,
              dilations=dilations,
              strides=strides,
@@ -568,7 +568,7 @@ def _Conv2DGrad(op, grad):
              data_format=data_format),
          nn_ops.conv2d_backprop_filter(
              #op.inputs[0],
-             filters,
+             acts,
              shape_1,
              grad,
              dilations=dilations,
