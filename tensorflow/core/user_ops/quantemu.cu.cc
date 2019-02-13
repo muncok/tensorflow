@@ -606,8 +606,8 @@ void QuantEmuLowpCudaKernel(
 
   unsigned short rne_mask = 0; /* round to nearest even mask */ 
   unsigned short sr_mask = 0;  /* stochastic rounding mask */ 
-  if (rmode == RNE) rne_mask = 1;  
-  if (rmode == STOCHASTIC) sr_mask = 1;  
+  if (rmode == ROUND_RNE) rne_mask = 1;  
+  if (rmode == ROUND_STOCHASTIC) sr_mask = 1;  
 
   unsigned short mask_mant = (unsigned short)(0xFFFF << lshift);
   unsigned short mask_mant_grs = (unsigned short)(0xFFFF << rshift);
@@ -666,8 +666,8 @@ void QuantEmuLowpCudaKernel(
 
   unsigned short rne_mask = 0; /* round to nearest even mask */ 
   unsigned short sr_mask = 0;  /* stochastic rounding mask */ 
-  if (rmode == RNE) rne_mask = 1;  
-  if (rmode == STOCHASTIC) sr_mask = 1;  
+  if (rmode == ROUND_RNE) rne_mask = 1;  
+  if (rmode == ROUND_STOCHASTIC) sr_mask = 1;  
 
   unsigned short mask_mant = (unsigned short)(0xFFFF << lshift);
   unsigned short mask_mant_grs = (unsigned short)(0xFFFF << rshift);

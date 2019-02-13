@@ -139,8 +139,8 @@ struct QuantEmuFunctor<CPUDevice, T> {
         int negative = (ival < 0);
         /* disable sign bit for rounding */
         if(negative) ival = 0 - ival;
-        ival += ((rmode==BIASED) & (rbias > 0));
-        ival += ((rmode==NEAREST) & (rbias > 1));
+//        ival += ((rmode==BIASED) & (rbias > 0));
+//        ival += ((rmode==NEAREST) & (rbias > 1));
         /* saturate after rounding */
         if (ival > quant_max) ival = quant_max;
         /* restore sign */
