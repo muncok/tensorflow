@@ -3,7 +3,7 @@
 #include "quantemu.h"
 #include "third_party/eigen3/unsupported/Eigen/CXX11/Tensor"
 #include <limits>
-//#include "posit_types.h" 
+#include "posit_types.h" 
 
 using namespace tensorflow;
 using GPUDevice = Eigen::GpuDevice;
@@ -11,6 +11,7 @@ using GPUDevice = Eigen::GpuDevice;
 #define CUBLOCK_SIZE 512 
 
 //#include "posit_impl.cu.cc" 
+#include "posit_impl_cuda.h" 
 #if 0 //GOOGLE_CUDA
 extern __device__ 
 POSIT_UTYPE _pack_posit(struct unpacked_t up, int nbits, int es);
@@ -21,6 +22,31 @@ float _pack_float(struct unpacked_t up);
 extern __device__ 
 struct unpacked_t _unpack_float(float f);
 #endif 
+
+__device__ 
+static inline uint32_t rotl(const uint32_t x, int k) {
+	return (x << k) | (x >> (32 - k));
+}
+
+__device__
+static uint32_t  s[4] = {0x76B5DBC3, 0x532CB7BF, 0x6AFA41C3, 0x28DBD9F7};
+
+__device__ 
+uint32_t xorshf_rand(void) {
+	const uint32_t result_plus = s[0] + s[3];
+	const uint32_t t = s[1] << 9;
+
+	s[2] ^= s[0];
+	s[3] ^= s[1];
+	s[1] ^= s[2];
+	s[0] ^= s[3];
+
+	s[2] ^= t;
+
+	s[3] = rotl(s[3], 11);
+
+	return result_plus;
+}
 
 __device__ 
 Eigen::half atomicMinf(
@@ -578,6 +604,11 @@ void QuantEmuLowpCudaKernel(
   int exp_max = (0x1 << exp_bits-1) - 1; 
   int exp_min = 1 - exp_max; 
 
+  unsigned short rne_mask = 0; /* round to nearest even mask */ 
+  unsigned short sr_mask = 0;  /* stochastic rounding mask */ 
+  if (rmode == RNE) rne_mask = 1;  
+  if (rmode == STOCHASTIC) sr_mask = 1;  
+
   unsigned short mask_mant = (unsigned short)(0xFFFF << lshift);
   unsigned short mask_mant_grs = (unsigned short)(0xFFFF << rshift);
    /* mask to extract G(gaurd), R (round), S (sticky) bits */ 
@@ -590,12 +621,19 @@ void QuantEmuLowpCudaKernel(
       h.f = hval;
      
       unsigned short mant_grs = (h.u & mask_mant_grs); 
+      /* stochastic rounding */ 
+      uint32_t rand = xorshf_rand();
+      /* apply stochastic rounding before truncation if sr_mask is enabled */ 
+      h.u += sr_mask * ((unsigned short)rand & 0xFF); 
+
       /* truncation */ 
       h.u = (h.u & mask_mant); 
-      /* round to nearest even */ 
+
+      /* round to nearest even after truncation if rne_mask is enabled */ 
       unsigned short rmask_tie = ((mant_grs & lsbGRS) >> rshift);  
       unsigned short rmask = (rmask_tie & 0x7);  
-      h.u += (((rmask > 0x4) || (rmask_tie == 0xC) ) << lshift); 
+      h.u += rne_mask * (((rmask > 0x4) || (rmask_tie == 0xC) ) << lshift); 
+
 #if 0 /* revisit this later TBD */ 
       /* exponent handling */ 
       int new_exp = (h.parts.exponent - 15); 
@@ -626,6 +664,11 @@ void QuantEmuLowpCudaKernel(
   int exp_max = (0x1 << exp_bits-1) - 1; 
   int exp_min = 1 - exp_max; 
 
+  unsigned short rne_mask = 0; /* round to nearest even mask */ 
+  unsigned short sr_mask = 0;  /* stochastic rounding mask */ 
+  if (rmode == RNE) rne_mask = 1;  
+  if (rmode == STOCHASTIC) sr_mask = 1;  
+
   unsigned short mask_mant = (unsigned short)(0xFFFF << lshift);
   unsigned short mask_mant_grs = (unsigned short)(0xFFFF << rshift);
    /* mask to extract G(gaurd), R (round), S (sticky) bits */ 
@@ -637,14 +680,19 @@ void QuantEmuLowpCudaKernel(
       __half  hval = inval; 
       h.f = hval;
 
-
       unsigned short mant_grs = (h.u & mask_mant_grs); 
+      /* stochastic rounding */ 
+      uint32_t rand = xorshf_rand();
+      /* apply stochastic rounding before truncation if sr_mask is enabled */ 
+      h.u += sr_mask * ((unsigned short)rand & 0xFF); 
+
       /* truncation */ 
       h.u = (h.u & mask_mant); 
-      /* round to nearest even */ 
+
+      /* round to nearest even after truncation if rne_mask is enabled */ 
       unsigned short rmask_tie = ((mant_grs & lsbGRS) >> rshift);  
       unsigned short rmask = (rmask_tie & 0x7);  
-      h.u += (((rmask > 0x4) || (rmask_tie == 0xC) ) << lshift); 
+      h.u += rne_mask * (((rmask > 0x4) || (rmask_tie == 0xC) ) << lshift); 
 
 #if 0 /* revisit this later TBD */ 
       /* exponent handling */ 
@@ -661,7 +709,58 @@ void QuantEmuLowpCudaKernel(
   }
 }
 
-#if 0
+__global__ 
+void QuantEmuLOG2CudaKernel(
+	const int size, 
+	const float *in, 
+	float *out) 
+{
+  unsigned int  mask_exp = (unsigned int)(0x7F800000);
+  int exp7b_max = 63; 
+  int exp7b_min = -62; 
+
+  for (int gid = (blockIdx.x * blockDim.x) + threadIdx.x; gid < size; gid += blockDim.x * gridDim.x) {
+   
+      UFLOAT32 uf; 
+      uf.f = in[gid];
+      int log2_7b = (((uf.u & mask_exp) >> 23) - 127); 
+      log2_7b = min(exp7b_max, log2_7b); 
+      log2_7b = max(exp7b_min, log2_7b); 
+      log2_7b += 127; 
+      unsigned int ival = (uf.u & 0x80000000) | (log2_7b << 23); 
+      uf.u = ival; 
+      out[gid] = uf.f;
+  }
+}
+
+__global__ 
+void QuantEmuLOG2CudaKernel(
+	const int size, 
+	const Eigen::half* in, 
+	Eigen::half* out) 
+{
+  unsigned short mask_exp = (unsigned short)(0x7C00);
+  short exp4b_max = 7; 
+  short exp4b_min = -6; 
+
+  for (int gid = (blockIdx.x * blockDim.x) + threadIdx.x; gid < size; gid += blockDim.x * gridDim.x) {
+   
+      __half_t h; 
+      Eigen::half inval = in[gid];
+      __half  hval = inval; 
+      h.f = hval;
+
+      short log2_4b = (((h.u & mask_exp) >> 10) - 15); 
+      log2_4b = min(exp4b_max, log2_4b); 
+      log2_4b = max(exp4b_min, log2_4b); 
+      log2_4b += 15; 
+      unsigned short ival = (h.u & 0x8000) | (log2_4b << 10); 
+      h.u = ival;
+      Eigen::half outval = h.f; 
+      out[gid] = outval;
+  }
+}
+
 __global__ 
 void QuantEmuPositCudaKernel(
 	int m_bits, 
@@ -693,7 +792,6 @@ void QuantEmuPositCudaKernel(
   }
 }
 
-#endif 
 /* Define the GPU implementation that launches the CUDA kernel. */
 template <typename T>
 struct QuantEmuFunctor<GPUDevice, T> { 
@@ -894,7 +992,21 @@ struct LowpFloatQuantEmuFunctor <GPUDevice, T> {
 };
 template struct LowpFloatQuantEmuFunctor<GPUDevice, float>;
 template struct LowpFloatQuantEmuFunctor<GPUDevice, Eigen::half>;
-#if 0
+
+template <typename T>
+struct Log2QuantEmuFunctor <GPUDevice, T> {
+  void operator()(const GPUDevice& d, int size, const T* in, T* out) {
+    //std::cout << " Inside the Log2QuantEmuFunctor GPU version "<< size  << std::endl; 
+    int block = CUBLOCK_SIZE; 
+    int grid = ( size + (CUBLOCK_SIZE-1))/CUBLOCK_SIZE; 
+    QuantEmuLOG2CudaKernel <<<grid, block, 0, d.stream()>>>(size, in, out); 
+    //cudaStreamSynchronize(d.stream());
+    //cudaDeviceSynchronize();
+  }
+};
+template struct Log2QuantEmuFunctor<GPUDevice, float>;
+template struct Log2QuantEmuFunctor<GPUDevice, Eigen::half>;
+
 template <typename T>
 struct PositQuantEmuFunctor <GPUDevice, T> {
   void operator()(const GPUDevice& d, int m_bits, int es_bits, int size, const T* in, T* out) {
@@ -908,5 +1020,4 @@ struct PositQuantEmuFunctor <GPUDevice, T> {
 };
 template struct PositQuantEmuFunctor<GPUDevice, float>;
 template struct PositQuantEmuFunctor<GPUDevice, Eigen::half>;
-#endif 
 #endif  // GOOGLE_CUDA

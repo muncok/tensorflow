@@ -7,6 +7,7 @@ using namespace tensorflow;
 #include <immintrin.h> 
 #include <omp.h> 
 //#include "posit_impl.cc" 
+#include "posit_impl.h" 
 //#include "posit_types.h" 
   
 using CPUDevice = Eigen::ThreadPoolDevice;
@@ -64,10 +65,8 @@ struct QuantEmuFunctor<CPUDevice, T> {
     T sfdequant = (T)1.0/sfquant;
     T sfquant_br = sfquant * 4.0;  /* quantize to nbits + 2, we need them for rounding */
 
-    __m256 vsfquant    = _mm256_set1_ps (sfquant);
-    __m256 vsfdequant    = _mm256_set1_ps (sfdequant);
-#if 0
-#endif 
+//    __m256 vsfquant    = _mm256_set1_ps (sfquant);
+//    __m256 vsfdequant    = _mm256_set1_ps (sfdequant);
 
     if ( size%16 == 0 ) 
     {
@@ -242,7 +241,14 @@ struct LowpFloatQuantEmuFunctor <CPUDevice, T> {
     }
   }
 };
-#if 0
+
+template <typename T>
+struct Log2QuantEmuFunctor <CPUDevice, T> {
+  void operator()(const CPUDevice& d, int size, const T* in, T* out) {
+     /* to be implemented, refer to CUDA version */ 
+  }
+};
+
 template <typename T>
 struct PositQuantEmuFunctor <CPUDevice, T> {
   void operator()(const CPUDevice& d, int m_bits, int es_bits, int size, const T* in, T* out) {
@@ -254,7 +260,7 @@ struct PositQuantEmuFunctor <CPUDevice, T> {
     }
   }
 };
-#endif 
+
 /* OpKernel definition.
  template parameter <T> is the datatype of the tensors.*/
 template <typename Device, typename T>
@@ -382,7 +388,16 @@ class QuantEmuOp : public OpKernel {
           poutput_tensor->flat<T>().data());
       }
       break; 
-#if 0
+      case LOG2: 
+      {
+	//std::cout << "Log2 quantization called" << ", mbits : " << mbits <<  std::endl; 
+        Log2QuantEmuFunctor<Device, T>()(
+          context->eigen_device<Device>(),
+          static_cast<int>(input_tensor.NumElements()),
+          input_tensor.flat<T>().data(),
+          poutput_tensor->flat<T>().data());
+      }
+      break; 
       case POSIT: 
       {
 	//std::cout << "Posit quantization called" << ", mbits : " << mbits <<  std::endl; 
@@ -395,7 +410,6 @@ class QuantEmuOp : public OpKernel {
           poutput_tensor->flat<T>().data());
       }
       break; 
-#endif 
     }
   }
  private: 
@@ -412,13 +426,14 @@ class QuantEmuOp : public OpKernel {
 
 template class QuantEmuOp<CPUDevice, float>; 
 //template class QuantEmuOp<CPUDevice, Eigen::half>; 
-//  template struct PositQuantEmuFunctor<CPUDevice, T>;	         
 /* Register the CPU kernels. */
 #define REGISTER_CPU(T)                                          \
   template struct QuantEmuFunctor<CPUDevice, T>;		 \
   template struct BlockC_QuantEmuFunctor<CPUDevice, T>;		 \
   template struct BlockCHW_QuantEmuFunctor<CPUDevice, T>;	 \
   template struct LowpFloatQuantEmuFunctor<CPUDevice, T>;	 \
+  template struct Log2QuantEmuFunctor<CPUDevice, T>;	         \
+  template struct PositQuantEmuFunctor<CPUDevice, T>;            \
   REGISTER_KERNEL_BUILDER(                                       \
       Name("QuantizeEmu").Device(DEVICE_CPU).TypeConstraint<T>("T"), \
       QuantEmuOp<CPUDevice, T>);
@@ -430,13 +445,14 @@ REGISTER_CPU(float);
 template class QuantEmuOp<GPUDevice, float>; 
 template class QuantEmuOp<GPUDevice, Eigen::half>; 
 
-//  template struct PositQuantEmuFunctor<GPUDevice, T>;                
 /* Register the GPU kernels. */ 
 #define REGISTER_GPU(T)                                              \
   template struct QuantEmuFunctor<GPUDevice, T>;              	     \
   template struct BlockC_QuantEmuFunctor<GPUDevice, T>;              \
   template struct BlockCHW_QuantEmuFunctor<GPUDevice, T>;            \
   template struct LowpFloatQuantEmuFunctor<GPUDevice, T>;            \
+  template struct Log2QuantEmuFunctor<GPUDevice, T>;                 \
+  template struct PositQuantEmuFunctor<GPUDevice, T>;                \
   REGISTER_KERNEL_BUILDER(                                           \
       Name("QuantizeEmu").Device(DEVICE_GPU).TypeConstraint<T>("T"), \
       QuantEmuOp<GPUDevice, T>);

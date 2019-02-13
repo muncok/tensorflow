@@ -4,9 +4,9 @@
 #include "tensorflow/core/framework/op_kernel.h"
 using namespace tensorflow;
 
-enum ROUND_MODE{NOROUND=0, BIASED, NEAREST};
+enum ROUNDING_MODES{TRUNCATE=0, NRE=1, STOCHASTIC=2};
 enum FGQ_TYPE{NOBLOCK=0, BLOCK_C, BLOCK_CHW };
-enum LPDATA_TYPE{INT=1, UINT=2, LOWP_FP=3, POSIT=4, BLOCK_FP=5};
+enum LPDATA_TYPE{INT=1, UINT=2, LOWP_FP=3, LOG2=4, POSIT=5, BLOCK_FP=6};
 
 using CPUDevice = Eigen::ThreadPoolDevice;
 using GPUDevice = Eigen::GpuDevice;
@@ -41,6 +41,11 @@ struct BlockCHW_QuantEmuFunctor {
 template <typename Device, typename T>
 struct LowpFloatQuantEmuFunctor {
   void operator()(const Device& d, int mbits, int exp_bits, int rmode, int size, const T *in, T *out);
+};
+
+template <typename Device, typename T>
+struct Log2QuantEmuFunctor {
+  void operator()(const Device& d, int size, const T *in, T *out);
 };
 
 template <typename Device, typename T>
