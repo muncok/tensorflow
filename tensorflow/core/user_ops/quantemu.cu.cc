@@ -4,6 +4,8 @@
 #include "third_party/eigen3/unsupported/Eigen/CXX11/Tensor"
 #include <limits>
 #include "posit_types.h" 
+#include "/usr/local/cuda-9.2/include/curand.h" 
+#include <curand_kernel.h> 
 
 using namespace tensorflow;
 using GPUDevice = Eigen::GpuDevice;
@@ -614,6 +616,9 @@ void QuantEmuLowpCudaKernel(
    /* mask to extract G(gaurd), R (round), S (sticky) bits */ 
   unsigned short lsbGRS = 0xF << rshift; 
 
+//  curandStateXORWOW_t rand_state; 
+//  curand_init (0, 0x28DBD9F7, 0, &rand_state);
+
   for (int gid = (blockIdx.x * blockDim.x) + threadIdx.x; gid < size; gid += blockDim.x * gridDim.x) {
       __half_t h; 
       float inval = in[gid];
@@ -622,10 +627,19 @@ void QuantEmuLowpCudaKernel(
      
       unsigned short mant_grs = (h.u & mask_mant_grs); 
       /* stochastic rounding */ 
-      uint32_t rand = xorshf_rand();
+      unsigned short rand = (unsigned short) xorshf_rand();
+      rand &= 0xFF; 
       /* apply stochastic rounding before truncation if sr_mask is enabled */ 
-      h.u += sr_mask * ((unsigned short)rand & 0xFF); 
-
+      //h.u += sr_mask * (rand & 0x00FF); 
+      h.u += sr_mask * (rand > 127) << lshift; 
+#if 0
+      /* supress NaN. Infinity if they occur after rounding */ 
+      //if (((h.u & 0x7C00)) == (unsigned short)(0x7C00)){  
+      if (__hisnan(h.f) || __hisinf (h.f)){  
+      /* restore */ 
+        h.f = hval; 
+      }
+#endif 
       /* truncation */ 
       h.u = (h.u & mask_mant); 
 
@@ -674,6 +688,9 @@ void QuantEmuLowpCudaKernel(
    /* mask to extract G(gaurd), R (round), S (sticky) bits */ 
   unsigned short lsbGRS = 0xF << rshift; 
 
+//  curandStateXORWOW_t rand_state; 
+//  curand_init (0, 0x28DBD9F7, 0, &rand_state);
+
   for (int gid = (blockIdx.x * blockDim.x) + threadIdx.x; gid < size; gid += blockDim.x * gridDim.x) {
       __half_t h; 
       Eigen::half inval = in[gid];
@@ -682,10 +699,19 @@ void QuantEmuLowpCudaKernel(
 
       unsigned short mant_grs = (h.u & mask_mant_grs); 
       /* stochastic rounding */ 
-      uint32_t rand = xorshf_rand();
+      unsigned short rand = (unsigned short) xorshf_rand();
+      rand &= 0xFF; 
       /* apply stochastic rounding before truncation if sr_mask is enabled */ 
-      h.u += sr_mask * ((unsigned short)rand & 0xFF); 
-
+      //h.u += sr_mask * (rand & 0x00FF); 
+      h.u += sr_mask * (rand > 127) << lshift; 
+#if 0
+      /* supress NaN. Infinity if they occur after rounding */ 
+      //if (((h.u & 0x7C00)) == (unsigned short)(0x7C00)){  
+      if (__hisnan(h.f) || __hisinf (h.f)){  
+      /* restore */ 
+        h.f = hval; 
+      }
+#endif 
       /* truncation */ 
       h.u = (h.u & mask_mant); 
 
