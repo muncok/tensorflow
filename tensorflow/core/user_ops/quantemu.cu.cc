@@ -4,7 +4,6 @@
 #include "third_party/eigen3/unsupported/Eigen/CXX11/Tensor"
 #include <limits>
 #include "posit_types.h" 
-#include "/usr/local/cuda-9.2/include/curand.h" 
 #include <curand_kernel.h> 
 
 using namespace tensorflow;
@@ -630,8 +629,8 @@ void QuantEmuLowpCudaKernel(
       unsigned short rand = (unsigned short) xorshf_rand();
       rand &= 0xFF; 
       /* apply stochastic rounding before truncation if sr_mask is enabled */ 
-      //h.u += sr_mask * (rand & 0x00FF); 
-      h.u += sr_mask * (rand > 127) << lshift; 
+      h.u += sr_mask * (rand & 0x00FF); 
+      //h.u += sr_mask * (rand > 127) << lshift; 
 #if 0
       /* supress NaN. Infinity if they occur after rounding */ 
       //if (((h.u & 0x7C00)) == (unsigned short)(0x7C00)){  
@@ -702,8 +701,8 @@ void QuantEmuLowpCudaKernel(
       unsigned short rand = (unsigned short) xorshf_rand();
       rand &= 0xFF; 
       /* apply stochastic rounding before truncation if sr_mask is enabled */ 
-      //h.u += sr_mask * (rand & 0x00FF); 
-      h.u += sr_mask * (rand > 127) << lshift; 
+      h.u += sr_mask * (rand & 0x00FF); 
+      //h.u += sr_mask * (rand > 127) << lshift; 
 #if 0
       /* supress NaN. Infinity if they occur after rounding */ 
       //if (((h.u & 0x7C00)) == (unsigned short)(0x7C00)){  
@@ -826,10 +825,10 @@ void QuantEmuBfloat16CudaKernel(
 {
   int lshift = 16;
   int rshift = lshift - 3; /* shift to preserve rounding bits */ 
-  unsigned int mask_mant = (unsigned short)(0xFFFFFFFF << lshift);
-  unsigned int mask_mant_grs = (unsigned short)(0xFFFFFFFF << rshift);
+  unsigned int mask_mant = (unsigned int)(0xFFFFFFFF << lshift);
+  unsigned int mask_mant_grs = (unsigned int)(0xFFFFFFFF << rshift);
    /* mask to extract G(gaurd), R (round), S (sticky) bits */ 
-  unsigned short lsbGRS = 0xF << rshift; 
+  unsigned int lsbGRS = 0xF << rshift; 
 
   for (int gid = (blockIdx.x * blockDim.x) + threadIdx.x; gid < size; gid += blockDim.x * gridDim.x) {
       UFLOAT32 uf; 
@@ -838,7 +837,7 @@ void QuantEmuBfloat16CudaKernel(
      
       unsigned int mant_grs = (uf.u & mask_mant_grs); 
       /* truncation */ 
-      uf.u = (uf.u & mask_mant); 
+      uf.u &= mask_mant; 
 
       /* round to nearest even after truncation if rne_mask is enabled */ 
       unsigned int rmask_tie = ((mant_grs & lsbGRS) >> rshift);  
@@ -856,10 +855,10 @@ void QuantEmuBfloat16CudaKernel(
 {
   int lshift = 16;
   int rshift = lshift - 3; /* shift to preserve rounding bits */ 
-  unsigned int mask_mant = (unsigned short)(0xFFFFFFFF << lshift);
-  unsigned int mask_mant_grs = (unsigned short)(0xFFFFFFFF << rshift);
+  unsigned int mask_mant = (unsigned int )(0xFFFFFFFF << lshift);
+  unsigned int mask_mant_grs = (unsigned int)(0xFFFFFFFF << rshift);
    /* mask to extract G(gaurd), R (round), S (sticky) bits */ 
-  unsigned short lsbGRS = 0xF << rshift; 
+  unsigned int lsbGRS = 0xF << rshift; 
 
   for (int gid = (blockIdx.x * blockDim.x) + threadIdx.x; gid < size; gid += blockDim.x * gridDim.x) {
       UFLOAT32 uf; 
@@ -869,7 +868,7 @@ void QuantEmuBfloat16CudaKernel(
      
       unsigned int mant_grs = (uf.u & mask_mant_grs); 
       /* truncation */ 
-      uf.u = (uf.u & mask_mant); 
+      uf.u &= mask_mant; 
 
       /* round to nearest even after truncation if rne_mask is enabled */ 
       unsigned int rmask_tie = ((mant_grs & lsbGRS) >> rshift);  
