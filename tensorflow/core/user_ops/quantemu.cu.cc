@@ -818,6 +818,68 @@ void QuantEmuPositCudaKernel(
   }
 }
 
+__global__ 
+void QuantEmuBfloat16CudaKernel(
+	const int size, 
+	const float *in, 
+	float *out) 
+{
+  int lshift = 16;
+  int rshift = lshift - 3; /* shift to preserve rounding bits */ 
+  unsigned int mask_mant = (unsigned short)(0xFFFFFFFF << lshift);
+  unsigned int mask_mant_grs = (unsigned short)(0xFFFFFFFF << rshift);
+   /* mask to extract G(gaurd), R (round), S (sticky) bits */ 
+  unsigned short lsbGRS = 0xF << rshift; 
+
+  for (int gid = (blockIdx.x * blockDim.x) + threadIdx.x; gid < size; gid += blockDim.x * gridDim.x) {
+      UFLOAT32 uf; 
+      float inval = in[gid];
+      uf.f = inval; 
+     
+      unsigned int mant_grs = (uf.u & mask_mant_grs); 
+      /* truncation */ 
+      uf.u = (uf.u & mask_mant); 
+
+      /* round to nearest even after truncation if rne_mask is enabled */ 
+      unsigned int rmask_tie = ((mant_grs & lsbGRS) >> rshift);  
+      unsigned int rmask = (rmask_tie & 0x7);  
+      uf.u += (((rmask > 0x4) || (rmask_tie == 0xC) ) << lshift); 
+
+      out[gid] = uf.f;
+  }
+}
+__global__ 
+void QuantEmuBfloat16CudaKernel(
+	const int size, 
+	const Eigen::half* in, 
+	Eigen::half* out) 
+{
+  int lshift = 16;
+  int rshift = lshift - 3; /* shift to preserve rounding bits */ 
+  unsigned int mask_mant = (unsigned short)(0xFFFFFFFF << lshift);
+  unsigned int mask_mant_grs = (unsigned short)(0xFFFFFFFF << rshift);
+   /* mask to extract G(gaurd), R (round), S (sticky) bits */ 
+  unsigned short lsbGRS = 0xF << rshift; 
+
+  for (int gid = (blockIdx.x * blockDim.x) + threadIdx.x; gid < size; gid += blockDim.x * gridDim.x) {
+      UFLOAT32 uf; 
+
+      float inval = __half2float(in[gid]);
+      uf.f = inval; 
+     
+      unsigned int mant_grs = (uf.u & mask_mant_grs); 
+      /* truncation */ 
+      uf.u = (uf.u & mask_mant); 
+
+      /* round to nearest even after truncation if rne_mask is enabled */ 
+      unsigned int rmask_tie = ((mant_grs & lsbGRS) >> rshift);  
+      unsigned int rmask = (rmask_tie & 0x7);  
+      uf.u += (((rmask > 0x4) || (rmask_tie == 0xC) ) << lshift); 
+
+      out[gid] = __float2half_rn(uf.f);
+  }
+}
+
 /* Define the GPU implementation that launches the CUDA kernel. */
 template <typename T>
 struct QuantEmuFunctor<GPUDevice, T> { 
@@ -1046,4 +1108,20 @@ struct PositQuantEmuFunctor <GPUDevice, T> {
 };
 template struct PositQuantEmuFunctor<GPUDevice, float>;
 template struct PositQuantEmuFunctor<GPUDevice, Eigen::half>;
+
+template <typename T>
+struct BfloatQuantEmuFunctor <GPUDevice, T> {
+  void operator()(const GPUDevice& d, int size, const T* in, T* out) {
+    //std::cout << " Inside the LowpFloatQuantEmuFunctor GPU version "<< size  << std::endl; 
+    int block = CUBLOCK_SIZE; 
+    int grid = ( size + (CUBLOCK_SIZE-1))/CUBLOCK_SIZE; 
+    QuantEmuBfloat16CudaKernel <<<grid, block, 0, d.stream()>>>(size, in, out); 
+    //cudaStreamSynchronize(d.stream());
+    //cudaDeviceSynchronize();
+  }
+};
+
+template struct BfloatQuantEmuFunctor<GPUDevice, float>;
+template struct BfloatQuantEmuFunctor<GPUDevice, Eigen::half>;
+
 #endif  // GOOGLE_CUDA

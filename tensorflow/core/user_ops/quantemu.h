@@ -6,7 +6,7 @@ using namespace tensorflow;
 
 enum ROUNDING_MODES{TRUNCATE=0, ROUND_RNE=1, ROUND_STOCHASTIC=2};
 enum FGQ_TYPE{NOBLOCK=0, BLOCK_C, BLOCK_CHW };
-enum LPDATA_TYPE{INT=1, UINT=2, LOWP_FP=3, LOG2=4, POSIT=5, BLOCK_FP=6};
+enum LPDATA_TYPE{INT=1, UINT=2, LOWP_FP=3, LOG2=4, POSIT=5, BFLOAT=6, BLOCK_FP=7};
 
 using CPUDevice = Eigen::ThreadPoolDevice;
 using GPUDevice = Eigen::GpuDevice;
@@ -56,6 +56,10 @@ struct BlockFloatQuantEmuFunctor {
 template <typename Device, typename T>
 struct PositQuantEmuFunctor {
   void operator()(const Device& d, int m_bits, int es_bits, int size, const T *in, T *out);
+};
+template <typename Device, typename T>
+struct BfloatQuantEmuFunctor {
+  void operator()(const Device& d, int size, const T *in, T *out);
 };
 
 #if GOOGLE_CUDA

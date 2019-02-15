@@ -261,6 +261,20 @@ struct PositQuantEmuFunctor <CPUDevice, T> {
   }
 };
 
+template <typename T>
+struct BfloatQuantEmuFunctor <CPUDevice, T> {
+  void operator()(const CPUDevice& d, int size, const T* in, T* out) {
+#if 0
+    #pragma omp parallel for 
+    for (int a= 0; a < size; a++) {
+      POSIT_UTYPE pval =pack_posit(unpack_float(in[a]), m_bits, es_bits); 
+      out[a] = pack_float (unpack_posit(pval, m_bits, es_bits));  
+    }
+#endif 
+  }
+};
+
+
 /* OpKernel definition.
  template parameter <T> is the datatype of the tensors.*/
 template <typename Device, typename T>
@@ -410,6 +424,18 @@ class QuantEmuOp : public OpKernel {
           poutput_tensor->flat<T>().data());
       }
       break; 
+      case BFLOAT: 
+      {
+	//std::cout << "BFLOAT-16 quantization called" << ", mbits : " << mbits <<  std::endl; 
+  	/* standard bfloat16 with RNE, mbits is ignored */ 
+        BfloatQuantEmuFunctor<Device, T>()(
+          context->eigen_device<Device>(),
+          static_cast<int>(input_tensor.NumElements()),
+          input_tensor.flat<T>().data(),
+          poutput_tensor->flat<T>().data());
+      }
+      break; 
+
     }
   }
  private: 
@@ -434,6 +460,7 @@ template class QuantEmuOp<CPUDevice, float>;
   template struct LowpFloatQuantEmuFunctor<CPUDevice, T>;	 \
   template struct Log2QuantEmuFunctor<CPUDevice, T>;	         \
   template struct PositQuantEmuFunctor<CPUDevice, T>;            \
+  template struct BfloatQuantEmuFunctor<CPUDevice, T>;            \
   REGISTER_KERNEL_BUILDER(                                       \
       Name("QuantizeEmu").Device(DEVICE_CPU).TypeConstraint<T>("T"), \
       QuantEmuOp<CPUDevice, T>);
@@ -453,6 +480,7 @@ template class QuantEmuOp<GPUDevice, Eigen::half>;
   template struct LowpFloatQuantEmuFunctor<GPUDevice, T>;            \
   template struct Log2QuantEmuFunctor<GPUDevice, T>;                 \
   template struct PositQuantEmuFunctor<GPUDevice, T>;                \
+  template struct BfloatQuantEmuFunctor<GPUDevice, T>;                \
   REGISTER_KERNEL_BUILDER(                                           \
       Name("QuantizeEmu").Device(DEVICE_GPU).TypeConstraint<T>("T"), \
       QuantEmuOp<GPUDevice, T>);
