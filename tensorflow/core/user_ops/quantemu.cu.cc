@@ -625,13 +625,14 @@ void QuantEmuLowpCudaKernel(
       h.f = hval;
      
       unsigned short mant_grs = (h.u & mask_mant_grs); 
+      unsigned short not_denorm = (((h.u & 0x7FFF) >> 10) > 0); 
+
       /* stochastic rounding */ 
       unsigned short rand = (unsigned short) xorshf_rand();
-      rand &= 0xFF; 
       /* apply stochastic rounding before truncation if sr_mask is enabled */ 
-      h.u += sr_mask * (rand & 0x00FF); 
+      h.u += not_denorm * sr_mask * (rand & 0x00FF); 
       //h.u += sr_mask * (rand > 127) << lshift; 
-#if 0
+#if 10
       /* supress NaN. Infinity if they occur after rounding */ 
       //if (((h.u & 0x7C00)) == (unsigned short)(0x7C00)){  
       if (__hisnan(h.f) || __hisinf (h.f)){  
@@ -645,7 +646,7 @@ void QuantEmuLowpCudaKernel(
       /* round to nearest even after truncation if rne_mask is enabled */ 
       unsigned short rmask_tie = ((mant_grs & lsbGRS) >> rshift);  
       unsigned short rmask = (rmask_tie & 0x7);  
-      h.u += rne_mask * (((rmask > 0x4) || (rmask_tie == 0xC) ) << lshift); 
+      h.u += not_denorm * rne_mask * (((rmask > 0x4) || (rmask_tie == 0xC) ) << lshift); 
 
 #if 0 /* revisit this later TBD */ 
       /* exponent handling */ 
@@ -697,13 +698,13 @@ void QuantEmuLowpCudaKernel(
       h.f = hval;
 
       unsigned short mant_grs = (h.u & mask_mant_grs); 
+      unsigned short not_denorm = (((h.u & 0x7FFF) >> 10) > 0); 
       /* stochastic rounding */ 
       unsigned short rand = (unsigned short) xorshf_rand();
-      rand &= 0xFF; 
       /* apply stochastic rounding before truncation if sr_mask is enabled */ 
-      h.u += sr_mask * (rand & 0x00FF); 
+      h.u += not_denorm * sr_mask * (rand & 0x00FF); 
       //h.u += sr_mask * (rand > 127) << lshift; 
-#if 0
+#if 10
       /* supress NaN. Infinity if they occur after rounding */ 
       //if (((h.u & 0x7C00)) == (unsigned short)(0x7C00)){  
       if (__hisnan(h.f) || __hisinf (h.f)){  
@@ -717,7 +718,7 @@ void QuantEmuLowpCudaKernel(
       /* round to nearest even after truncation if rne_mask is enabled */ 
       unsigned short rmask_tie = ((mant_grs & lsbGRS) >> rshift);  
       unsigned short rmask = (rmask_tie & 0x7);  
-      h.u += rne_mask * (((rmask > 0x4) || (rmask_tie == 0xC) ) << lshift); 
+      h.u += not_denorm * rne_mask * (((rmask > 0x4) || (rmask_tie == 0xC) ) << lshift); 
 
 #if 0 /* revisit this later TBD */ 
       /* exponent handling */ 
