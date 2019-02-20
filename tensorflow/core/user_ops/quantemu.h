@@ -55,7 +55,7 @@ struct BlockFloatQuantEmuFunctor {
 
 template <typename Device, typename T>
 struct PositQuantEmuFunctor {
-  void operator()(const Device& d, int m_bits, int es_bits, int size, const T *in, T *out);
+  void operator()(const Device& d, int m_bits, int es_bits, int rmode, int size, const T *in, T *out);
 };
 template <typename Device, typename T>
 struct BfloatQuantEmuFunctor {

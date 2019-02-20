@@ -51,11 +51,16 @@ POSIT_UTYPE _util_neg(POSIT_UTYPE p, int nbits)
 }
 
 __device__ 
-POSIT_UTYPE _pack_posit(struct unpacked_t up, int nbits, int es)
+POSIT_UTYPE _pack_posit(struct unpacked_t up, int nbits, int es, int rmode)
 {
     POSIT_UTYPE p;
     POSIT_UTYPE regbits;
     POSIT_UTYPE expbits;
+    POSIT_UTYPE rne_mask = 0; /* round to nearest even mask */ 
+    POSIT_UTYPE sr_mask = 0;  /* stochastic rounding mask */ 
+    if (rmode == ROUND_RNE) rne_mask = 1;  
+    if (rmode == ROUND_STOCHASTIC) sr_mask = 1;  
+
 
     // handle underflow and overflow.
     // in either case, exponent and fraction bits will disappear.
@@ -69,14 +74,14 @@ POSIT_UTYPE _pack_posit(struct unpacked_t up, int nbits, int es)
     int reg = FLOORDIV(up.exp, POW2(es));
     int ss = _util_ss();
     int rs = MAX(-reg + 1, reg + 2);
-
+#if 0
     // FIXME: round exponent up if needed
     if (ss + rs + es >= nbits && up.frac >= POSIT_MSB) {
         up.exp++;
         reg = FLOORDIV(up.exp, POW2(es));
         rs = MAX(-reg + 1, reg + 2);
     }
-
+#endif 
     POSIT_UTYPE exp = up.exp - POW2(es) * reg;
 
     if (reg < 0) {
@@ -90,6 +95,18 @@ POSIT_UTYPE _pack_posit(struct unpacked_t up, int nbits, int es)
     p = expbits | (p >> es);
     p = regbits | (p >> rs);
     p = p >> ss;
+
+    /* Rounding to nearest Even */ 
+    int rshift = POSIT_WIDTH - (nbits + 3);
+    POSIT_UTYPE lsbGRS = 0xF0000000 >> (nbits - 1);
+    POSIT_UTYPE rmask_tie = ((p & lsbGRS) >> rshift);
+    POSIT_UTYPE rmask = (rmask_tie & 0x7);
+    p += rne_mask * (((rmask > 0x4) || (rmask_tie == 0xC)) << (POSIT_WIDTH - nbits));
+
+    /* stochastic rounding */ 
+    POSIT_UTYPE rand = (POSIT_UTYPE) _xorshf_rand();
+    /* apply stochastic rounding before truncation if sr_mask is enabled */ 
+    p += sr_mask * (rand & (POSIT_MASK >> nbits)); 
 
     if (up.neg) {
         return _util_neg(p, nbits);

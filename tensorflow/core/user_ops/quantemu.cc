@@ -6,9 +6,6 @@ using namespace tensorflow;
 
 #include <immintrin.h> 
 #include <omp.h> 
-//#include "posit_impl.cc" 
-#include "posit_impl.h" 
-//#include "posit_types.h" 
   
 using CPUDevice = Eigen::ThreadPoolDevice;
 using GPUDevice = Eigen::GpuDevice;
@@ -47,6 +44,30 @@ __m256 _mm256_cvtpsph_ps(__m256 reg)
   return  _mm256_cvtph_ps (hreg);
 }
 #endif 
+
+static inline uint32_t rotl(const uint32_t x, int k) {
+	return (x << k) | (x >> (32 - k));
+}
+
+static uint32_t  s_[4] = {0x76B5DBC3, 0x532CB7BF, 0x6AFA41C3, 0x28DBD9F7};
+
+uint32_t xorshf_rand(void) {
+	const uint32_t result_plus = s_[0] + s_[3];
+	const uint32_t t = s_[1] << 9;
+
+	s_[2] ^= s_[0];
+	s_[3] ^= s_[1];
+	s_[1] ^= s_[2];
+	s_[0] ^= s_[3];
+
+	s_[2] ^= t;
+
+	s_[3] = rotl(s_[3], 11);
+
+	return result_plus;
+}
+/* Posit implementation */ 
+#include "posit_impl.h" 
 
 /* CPU specialization of actual computation. */
 template <typename T>
@@ -251,11 +272,11 @@ struct Log2QuantEmuFunctor <CPUDevice, T> {
 
 template <typename T>
 struct PositQuantEmuFunctor <CPUDevice, T> {
-  void operator()(const CPUDevice& d, int m_bits, int es_bits, int size, const T* in, T* out) {
+  void operator()(const CPUDevice& d, int m_bits, int es_bits, int rmode, int size, const T* in, T* out) {
 
     #pragma omp parallel for 
     for (int a= 0; a < size; a++) {
-      POSIT_UTYPE pval =pack_posit(unpack_float(in[a]), m_bits, es_bits); 
+      POSIT_UTYPE pval =pack_posit(unpack_float(in[a]), m_bits, es_bits, rmode); 
       out[a] = pack_float (unpack_posit(pval, m_bits, es_bits));  
     }
   }
@@ -419,6 +440,7 @@ class QuantEmuOp : public OpKernel {
           context->eigen_device<Device>(),
           mbits, 	
           exponent_bits_,
+	  round_mode_,
           static_cast<int>(input_tensor.NumElements()),
           input_tensor.flat<T>().data(),
           poutput_tensor->flat<T>().data());

@@ -11,21 +11,8 @@ using GPUDevice = Eigen::GpuDevice;
 
 #define CUBLOCK_SIZE 512 
 
-//#include "posit_impl.cu.cc" 
-#include "posit_impl_cuda.h" 
-#if 0 //GOOGLE_CUDA
-extern __device__ 
-POSIT_UTYPE _pack_posit(struct unpacked_t up, int nbits, int es);
-extern __device__ 
-struct unpacked_t _unpack_posit(POSIT_UTYPE p, int nbits, int es);
-extern __device__ 
-float _pack_float(struct unpacked_t up);
-extern __device__ 
-struct unpacked_t _unpack_float(float f);
-#endif 
-
 __device__ 
-static inline uint32_t rotl(const uint32_t x, int k) {
+static inline uint32_t rotl_(const uint32_t x, int k) {
 	return (x << k) | (x >> (32 - k));
 }
 
@@ -33,7 +20,7 @@ __device__
 static uint32_t  s[4] = {0x76B5DBC3, 0x532CB7BF, 0x6AFA41C3, 0x28DBD9F7};
 
 __device__ 
-uint32_t xorshf_rand(void) {
+uint32_t _xorshf_rand(void) {
 	const uint32_t result_plus = s[0] + s[3];
 	const uint32_t t = s[1] << 9;
 
@@ -44,10 +31,12 @@ uint32_t xorshf_rand(void) {
 
 	s[2] ^= t;
 
-	s[3] = rotl(s[3], 11);
+	s[3] = rotl_(s[3], 11);
 
 	return result_plus;
 }
+
+#include "posit_impl_cuda.h" 
 
 __device__ 
 Eigen::half atomicMinf(
@@ -631,7 +620,7 @@ void QuantEmuLowpCudaKernel(
       unsigned short must_round = not_denorm ? not_denorm : (((h.u >> 8)& 0x3) < 0x3); 
 
       /* stochastic rounding */ 
-      unsigned short rand = (unsigned short) xorshf_rand();
+      unsigned short rand = (unsigned short) _xorshf_rand();
       /* apply stochastic rounding before truncation if sr_mask is enabled */ 
       //h.u += must_round * not_denorm * sr_mask * (rand & 0xFF); 
       h.u += not_denorm * sr_mask * (rand & 0xFF); 
@@ -694,7 +683,7 @@ void QuantEmuLowpCudaKernel(
       unsigned short must_round = not_denorm ? not_denorm : (((h.u >> 8)& 0x3) < 0x3); 
 
       /* stochastic rounding */ 
-      unsigned short rand = (unsigned short) xorshf_rand();
+      unsigned short rand = (unsigned short) _xorshf_rand();
       //unsigned short rand = (unsigned short) curand(&rand_state);
       /* apply stochastic rounding before truncation if sr_mask is enabled */ 
       //h.u += sr_mask * (rand & 0x00FF); 
@@ -774,13 +763,14 @@ __global__
 void QuantEmuPositCudaKernel(
 	int m_bits, 
 	int es_bits, 
+	int rmode, 
 	const int size, 
 	const float *in, 
 	float *out) 
 {
   for (int gid = (blockIdx.x * blockDim.x) + threadIdx.x; gid < size; gid += blockDim.x * gridDim.x) {
       float inval = in[gid];
-      POSIT_UTYPE pval =_pack_posit(_unpack_float(inval), m_bits, es_bits); 
+      POSIT_UTYPE pval =_pack_posit(_unpack_float(inval), m_bits, es_bits, rmode); 
       float outval = _pack_float (_unpack_posit(pval, m_bits, es_bits));  
       out[gid] = outval;
   }
@@ -789,13 +779,14 @@ __global__
 void QuantEmuPositCudaKernel(
 	int m_bits, 
 	int es_bits, 
+	int rmode, 
 	const int size, 
 	const Eigen::half *in, 
 	Eigen::half *out) 
 {
   for (int gid = (blockIdx.x * blockDim.x) + threadIdx.x; gid < size; gid += blockDim.x * gridDim.x) {
       __half inval = in[gid];
-      POSIT_UTYPE pval =_pack_posit(_unpack_float(__half2float(inval)), m_bits, es_bits); 
+      POSIT_UTYPE pval =_pack_posit(_unpack_float(__half2float(inval)), m_bits, es_bits, rmode); 
       float outval = _pack_float (_unpack_posit(pval, m_bits, es_bits));  
       out[gid] = __float2half_rn(outval);
   }
@@ -1080,11 +1071,11 @@ template struct Log2QuantEmuFunctor<GPUDevice, Eigen::half>;
 
 template <typename T>
 struct PositQuantEmuFunctor <GPUDevice, T> {
-  void operator()(const GPUDevice& d, int m_bits, int es_bits, int size, const T* in, T* out) {
+  void operator()(const GPUDevice& d, int m_bits, int es_bits, int rmode, int size, const T* in, T* out) {
     //std::cout << " Inside the PositQuantEmuFunctor GPU version "<< size  << std::endl; 
     int block = CUBLOCK_SIZE; 
     int grid = ( size + (CUBLOCK_SIZE-1))/CUBLOCK_SIZE; 
-    QuantEmuPositCudaKernel<<<grid, block, 0, d.stream()>>>(m_bits, es_bits, size, in, out); 
+    QuantEmuPositCudaKernel<<<grid, block, 0, d.stream()>>>(m_bits, es_bits, rmode, size, in, out); 
     //cudaStreamSynchronize(d.stream());
     //cudaDeviceSynchronize();
   }
