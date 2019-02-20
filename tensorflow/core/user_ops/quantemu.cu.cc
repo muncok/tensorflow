@@ -625,38 +625,29 @@ void QuantEmuLowpCudaKernel(
       h.f = hval;
      
       unsigned short mant_grs = (h.u & mask_mant_grs); 
-      unsigned short not_denorm = (((h.u & 0x7FFF) >> 10) > 0); 
+      //unsigned short not_denorm = (((h.u & 0x7FFF) >> 10) > 0); 
+      unsigned short not_denorm = ((((h.u & 0x7FFF) >> 10) & 0x1F) > 0); 
+      unsigned short is_denorm = (not_denorm == 0)?1:0;
+      unsigned short must_round = not_denorm ? not_denorm : (((h.u >> 8)& 0x3) < 0x3); 
 
       /* stochastic rounding */ 
       unsigned short rand = (unsigned short) xorshf_rand();
       /* apply stochastic rounding before truncation if sr_mask is enabled */ 
-      h.u += not_denorm * sr_mask * (rand & 0x00FF); 
-      //h.u += sr_mask * (rand > 127) << lshift; 
-#if 10
-      /* supress NaN. Infinity if they occur after rounding */ 
-      //if (((h.u & 0x7C00)) == (unsigned short)(0x7C00)){  
-      if (__hisnan(h.f) || __hisinf (h.f)){  
-      /* restore */ 
-        h.f = hval; 
-      }
-#endif 
-      /* truncation */ 
-      h.u = (h.u & mask_mant); 
+      //h.u += must_round * not_denorm * sr_mask * (rand & 0xFF); 
+      h.u += not_denorm * sr_mask * (rand & 0xFF); 
 
       /* round to nearest even after truncation if rne_mask is enabled */ 
       unsigned short rmask_tie = ((mant_grs & lsbGRS) >> rshift);  
       unsigned short rmask = (rmask_tie & 0x7);  
-      h.u += not_denorm * rne_mask * (((rmask > 0x4) || (rmask_tie == 0xC) ) << lshift); 
+      //h.u += must_round * rne_mask * (((rmask > 0x4) || (rmask_tie == 0xC) ) << lshift); 
+      h.u += rne_mask * (((rmask > 0x4) || (rmask_tie == 0xC) ) << lshift); 
 
-#if 0 /* revisit this later TBD */ 
-      /* exponent handling */ 
-      int new_exp = (h.parts.exponent - 15); 
-      new_exp = min (exp_max, new_exp);
-      new_exp = max (exp_min, new_exp);
-      h.parts.exponent = new_exp + 15; 
-      /* flush denormals to zero */ 
-      if (((h.u & 0x7C00) >> 10 ) == 0) h.f = 0.0; 
-#endif 
+      /* stochastic round denormals --> nearest rounding */ 
+      //h.u += must_round * is_denorm * sr_mask * (((rmask > 0x4) || (rmask_tie == 0xC) ) << lshift); 
+      h.u += is_denorm * sr_mask * (((rmask > 0x4) || (rmask_tie == 0xC) ) << lshift); 
+
+       /* truncation */ 
+      h.u = (h.u & mask_mant); 
  
       float outval = __half2float(h.f);
       out[gid] = outval;
@@ -698,37 +689,29 @@ void QuantEmuLowpCudaKernel(
       h.f = hval;
 
       unsigned short mant_grs = (h.u & mask_mant_grs); 
-      unsigned short not_denorm = (((h.u & 0x7FFF) >> 10) > 0); 
+      unsigned short not_denorm = ((((h.u & 0x7FFF) >> 10) & 0x1F) > 0); 
+      unsigned short is_denorm = (not_denorm == 0)?1:0;
+      unsigned short must_round = not_denorm ? not_denorm : (((h.u >> 8)& 0x3) < 0x3); 
+
       /* stochastic rounding */ 
       unsigned short rand = (unsigned short) xorshf_rand();
+      //unsigned short rand = (unsigned short) curand(&rand_state);
       /* apply stochastic rounding before truncation if sr_mask is enabled */ 
-      h.u += not_denorm * sr_mask * (rand & 0x00FF); 
-      //h.u += sr_mask * (rand > 127) << lshift; 
-#if 10
-      /* supress NaN. Infinity if they occur after rounding */ 
-      //if (((h.u & 0x7C00)) == (unsigned short)(0x7C00)){  
-      if (__hisnan(h.f) || __hisinf (h.f)){  
-      /* restore */ 
-        h.f = hval; 
-      }
-#endif 
-      /* truncation */ 
-      h.u = (h.u & mask_mant); 
+      //h.u += sr_mask * (rand & 0x00FF); 
+      //h.u += must_round * not_denorm * sr_mask * (rand & 0xFF); 
+      h.u += not_denorm * sr_mask * (rand & 0xFF); 
 
       /* round to nearest even after truncation if rne_mask is enabled */ 
       unsigned short rmask_tie = ((mant_grs & lsbGRS) >> rshift);  
       unsigned short rmask = (rmask_tie & 0x7);  
-      h.u += not_denorm * rne_mask * (((rmask > 0x4) || (rmask_tie == 0xC) ) << lshift); 
+      //h.u += must_round * rne_mask * (((rmask > 0x4) || (rmask_tie == 0xC) ) << lshift); 
+      h.u += rne_mask * (((rmask > 0x4) || (rmask_tie == 0xC) ) << lshift); 
+      /* stochastic round denormals --> nearest rounding */ 
+      //h.u += must_round * is_denorm * sr_mask * (((rmask > 0x4) || (rmask_tie == 0xC) ) << lshift); 
+      h.u += is_denorm * sr_mask * (((rmask > 0x4) || (rmask_tie == 0xC) ) << lshift); 
 
-#if 0 /* revisit this later TBD */ 
-      /* exponent handling */ 
-      int new_exp = (h.parts.exponent - 15); 
-      new_exp = min (exp_max, new_exp);
-      new_exp = max (exp_min, new_exp);
-      h.parts.exponent = new_exp + 15; 
-      /* flush denormals to zero */ 
-      if (((h.u & 0x7C00) >> 10 ) == 0) h.f = 0.0; 
-#endif 
+      /* truncation */ 
+      h.u = (h.u & mask_mant); 
 
       Eigen::half outval = h.f; 
       out[gid] = outval;
