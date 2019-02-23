@@ -23,6 +23,7 @@ typedef union ufloat32
   };
 }UFLOAT32;
 
+
 template <typename Device, typename T>
 struct QuantEmuFunctor {
   void operator()(const Device& d, int unsigned_data, int mbits, int rmode, int size, T* in, T* out);

@@ -11,6 +11,16 @@ using GPUDevice = Eigen::GpuDevice;
 
 #define CUBLOCK_SIZE 512 
 
+typedef union half_t { 
+   unsigned short u; 
+   __half f; 
+   struct { 
+        unsigned int mantissa : 10; 
+	unsigned int exponent : 5;
+	unsigned int sign : 1;
+   } parts;
+} __half_t; 
+
 __device__ 
 static inline uint32_t rotl_(const uint32_t x, int k) {
 	return (x << k) | (x >> (32 - k));
@@ -569,15 +579,6 @@ void QuantEmuCudaKernel_Unsigned(
   }
 }
 
-typedef union half_t { 
-   unsigned short u; 
-   __half f; 
-   struct { 
-        unsigned int mantissa : 10; 
-	unsigned int exponent : 5;
-	unsigned int sign : 1;
-   } parts;
-} __half_t; 
 
 __global__ 
 void QuantEmuLowpCudaKernel(

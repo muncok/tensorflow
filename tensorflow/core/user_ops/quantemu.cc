@@ -1,5 +1,6 @@
 #include "quantemu.h"
 #include "tensorflow/core/framework/shape_inference.h"
+#include "third_party/eigen3/unsupported/Eigen/CXX11/Tensor"
 #include <assert.h>
 
 using namespace tensorflow;  
@@ -29,7 +30,6 @@ REGISTER_OP("QuantizeEmu")
       return Status::OK(); 
     });
 
-
 #define ROUNDING_CTRL (_MM_FROUND_TO_NEAREST_INT |_MM_FROUND_NO_EXC)
 #ifdef AVX512F
 __m512 _mm512_cvtpsph_ps(__m512 reg)
@@ -44,6 +44,22 @@ __m256 _mm256_cvtpsph_ps(__m256 reg)
   return  _mm256_cvtph_ps (hreg);
 }
 #endif 
+
+unsigned short __float2half_rn (float inval) 
+{
+  unsigned short out[8] = {0};
+  __m128i vout = _mm_cvtps_ph (_mm_set1_ps (inval),(_MM_FROUND_TO_NEAREST_INT |_MM_FROUND_NO_EXC));
+  _mm_store_si128 ((__m128i*)&out[0], vout); 
+  return out[0]; 
+}
+
+float __half2float(unsigned short hval) 
+{
+  float out[8] = {0}; 
+  __m128 vout = _mm_cvtph_ps(_mm_set1_epi16(hval)); 
+  _mm_store_ps (&out[0], vout); 
+  return out[0]; 
+}
 
 static inline uint32_t rotl(const uint32_t x, int k) {
 	return (x << k) | (x >> (32 - k));
@@ -69,107 +85,109 @@ uint32_t xorshf_rand(void) {
 /* Posit implementation */ 
 #include "posit_impl.h" 
 
-/* CPU specialization of actual computation. */
-template <typename T>
-struct QuantEmuFunctor<CPUDevice, T> {
-  void operator()(const CPUDevice& d, int unsigned_data, int mbits, int rmode, int size, T* in, T* out) {
-
-    //std::cout << " *** Inside the QuantEmuFunctor CPU version "<< size  << std::endl; 
-    T absmax = 0.0; 
+void QuantEmuIntCPUKernel(
+	int mbits, 
+	int rmode, 
+	const int size, 
+	const float *in, 
+	float *out) 
+{
+    float absmax = (float)0.0; 
     #pragma omp parallel for reduction(max: absmax)
     for (int i=0; i < size; i++) if (fabs(in[i]) > absmax) absmax = fabs(in[i]);  
 
     int quant_max = pow(2, mbits-1) - 1;
-    if (unsigned_data == 1) quant_max = pow(2, mbits) - 1;
+    float sfquant = (float)(quant_max/absmax);
+    float sfdequant = (float)1.0/sfquant;
+    float sfquant_plus8b = (float)((quant_max*256) /absmax);  /* use 8 extra bits to round */ 
+    /* mask to extract G(gaurd), R (round), S (sticky) bits */ 
+    int lshift = 8;
+    int rshift = lshift - 3; /* RNE: only use 3 our of 8 extra bits to round */
+    unsigned int lsbGRS = 0xF << rshift; 
 
-    T sfquant = (T)(quant_max/absmax);
-    T sfdequant = (T)1.0/sfquant;
-    T sfquant_br = sfquant * 4.0;  /* quantize to nbits + 2, we need them for rounding */
+    int rne_mask = 0; /* round to nearest even mask */ 
+    int sr_mask = 0;  /* stochastic rounding mask */ 
+    if (rmode == ROUND_RNE) rne_mask = 1;  
+    if (rmode == ROUND_STOCHASTIC) sr_mask = 1;  
 
-//    __m256 vsfquant    = _mm256_set1_ps (sfquant);
-//    __m256 vsfdequant    = _mm256_set1_ps (sfdequant);
-
-    if ( size%16 == 0 ) 
-    {
-#ifdef AVX512F
-      __m512 vmaxpos     = _mm512_set1_ps (absmax);
-      __m512 vmaxneg     = _mm512_set1_ps (-absmax);
-      #pragma omp parallel for 
-      for (int i = 0; i < size; i+=16) {
-        __m512 vinp = _mm512_load_ps (&in[i]);
-        /* saturate to absmax value */ 
-        vinp = _mm512_min_ps (vinp, vmaxpos); 
-        vinp = _mm512_max_ps (vinp, vmaxneg); 
-
-        /* quantize */ 
-        //__m512i vint    = _mm512_cvtps_epi32 (_mm512_mul_ps (vinp, vsfquant));
-        /* quantize and round to nearest even */ 
-        __m512i vint    = _mm512_rint_ps(_mm512_mul_ps (vinp, vsfquant));
-        /* dequantize */ 
-        __m512 vout = _mm512_mul_ps ( _mm512_cvtepi32_ps (vint), vsfdequant); 
-
-        _mm512_store_ps (&out[i], vout); 
-      }
-#elif AVX
-      __m256 vmaxpos     = _mm256_set1_ps (absmax);
-      __m256 vmaxneg     = _mm256_set1_ps (-absmax);
-#if 0
-      __m256 vsfquant_br = _mm256_set1_ps (sfquant_br);
-      __m256i vrmask     = _mm256_set1_epi32 (0x3);
-      __m256i vposone    = _mm256_set1_epi32 (1);
-      __m256i vzero      = _mm256_set1_epi32 (0);
-      __m256i vnegone    = _mm256_set1_epi32 (-1);
-
-      __m256i vrthreshold  = _mm256_set1_epi32 (0x0); /* BIASED */
-      if (rmode==NEAREST) vrthreshold  = _mm256_set1_epi32 (0x0); /* NEAREST */
-#endif 
-      #pragma omp parallel for 
-      for (int i = 0; i < size; i+=8) {
-        __m256 vinp = _mm256_load_ps (&in[i]);
-        vinp = _mm256_min_ps (vinp, vmaxpos); 
-        vinp = _mm256_max_ps (vinp, vmaxneg); 
-        /* quantize */ 
-        __m256i vint    = _mm256_cvtps_epi32 (_mm256_mul_ps (vinp, vsfquant));
-#if 0      
-        __m256i vint_br =_mm256_and_si256 (_mm256_cvtps_epi32 (_mm256_mul_ps (vinp, vsfquant_br)), vrmask);
-        /* flip sign and round */ 
-        __mmask8 rmask  = _mm256_cmp_epi32_mask (vint_br, vrthreshold, _MM_CMPINT_NLE);
-        __m256i vsignflip = _mm256_mask_mov_epi32 (vposone, _mm256_cmp_epi32_mask (vint, vzero, _MM_CMPINT_LT), vnegone ); 
-        __m256i vuint = _mm256_mul_epi32 (vint, vsignflip); 
-        vuint = _mm256_mask_add_epi32 (vuint, rmask, vuint, vposone);
-        vint = _mm256_mul_epi32 (vuint, vsignflip); 
-#endif 
-        /* dequantize */ 
-        __m256 vout = _mm256_mul_ps ( _mm256_cvtepi32_ps (vint), vsfdequant); 
-        _mm256_store_ps (&out[i], vout); 
-      }
-#endif 
-    } else {
- 
-      #pragma omp parallel for 
-      for (int i = 0; i < size; ++i) {
-        T inval = in[i];
-
-        /* saturate anything larger than fmax_val to fmax_val */
-        if (inval > absmax && inval > 0 ) inval = absmax;
-        if (fabs(inval) > absmax && inval < 0 ) inval = -absmax;
-
-        int ival = (int)(inval * sfquant);
-        int rbias = ((int)(inval * sfquant_br)) & 0x3;
-        //if (in[i] == 0.0) { ival = 0; rbias = 0; }
-        int negative = (ival < 0);
-        /* disable sign bit for rounding */
-        if(negative) ival = 0 - ival;
-//        ival += ((rmode==BIASED) & (rbias > 0));
-//        ival += ((rmode==NEAREST) & (rbias > 1));
-        /* saturate after rounding */
-        if (ival > quant_max) ival = quant_max;
-        /* restore sign */
-        if(negative) ival = 0 - ival;
-
-        out[i] = ival * sfdequant;
-      }
+    #pragma omp parallel for 
+    for (int i = 0; i < size; ++i) {
+      float inval = in[i];
+      /* saturate anything larger than fmax_val to fmax_val */
+      inval = std::min(inval, absmax); 
+      inval = std::max(inval, -absmax); 
+      int ival_plus8b = (int)(inval * sfquant_plus8b); 
+      /* stochastic rounding */ 
+      unsigned int rand = xorshf_rand();
+      ival_plus8b += sr_mask * (rand & 0xFF); 
+      /* round to nearest even after truncation if rne_mask is enabled */ 
+      unsigned short rmask_tie = ((ival_plus8b & lsbGRS) >> rshift);  
+      unsigned short rmask = (rmask_tie & 0x7);  
+      ival_plus8b += rne_mask * (((rmask > 0x4) || (rmask_tie == 0xC) ) << lshift); 
+      ival_plus8b += sr_mask * (ival_plus8b & lsbGRS); 
+      
+      /* truncation after rounding */ 
+      int ival = ival_plus8b >> lshift; 
+      out[i] = ival * sfdequant;
     }
+}
+
+void QuantEmuIntCPUKernel(
+	int mbits, 
+	int rmode, 
+	const int size, 
+	const Eigen::half *h_in, 
+	Eigen::half *out) 
+{
+    float absmax = (float)0.0; 
+    unsigned short *in = (unsigned short *) h_in; 
+  
+    #pragma omp parallel for reduction(max: absmax)
+    for (int i=0; i < size; i++) if (fabs(__half2float(in[i])) > absmax) absmax = fabs(__half2float(in[i]));  
+
+    int quant_max = pow(2, mbits-1) - 1;
+    float sfquant = (float)(quant_max/absmax);
+    float sfdequant = (float)1.0/sfquant;
+    float sfquant_plus8b = (float)((quant_max*256) /absmax);  /* use 8 extra bits to round */ 
+    /* mask to extract G(gaurd), R (round), S (sticky) bits */ 
+    int lshift = 8;
+    int rshift = lshift - 3; /* RNE: only use 3 our of 8 extra bits to round */
+    unsigned int lsbGRS = 0xF << rshift; 
+
+    int rne_mask = 0; /* round to nearest even mask */ 
+    int sr_mask = 0;  /* stochastic rounding mask */ 
+    if (rmode == ROUND_RNE) rne_mask = 1;  
+    if (rmode == ROUND_STOCHASTIC) sr_mask = 1;  
+
+    #pragma omp parallel for 
+    for (int i = 0; i < size; ++i) {
+      float inval = __half2float(in[i]);
+      /* saturate anything larger than fmax_val to fmax_val */
+      inval = std::min(inval, absmax); 
+      inval = std::max(inval, -absmax); 
+      int ival_plus8b = (int)(inval * sfquant_plus8b); 
+      /* stochastic rounding */ 
+      unsigned int rand = xorshf_rand();
+      ival_plus8b += sr_mask * (rand & 0xFF); 
+      /* round to nearest even after truncation if rne_mask is enabled */ 
+      unsigned short rmask_tie = ((ival_plus8b & lsbGRS) >> rshift);  
+      unsigned short rmask = (rmask_tie & 0x7);  
+      ival_plus8b += rne_mask * (((rmask > 0x4) || (rmask_tie == 0xC) ) << lshift); 
+      ival_plus8b += sr_mask * (ival_plus8b & lsbGRS); 
+      
+      /* truncation after rounding */ 
+      int ival = ival_plus8b >> lshift; 
+      float outval = ival * sfdequant; 
+
+      out[i] = (Eigen::half)__float2half_rn(outval);
+    }
+}
+
+/* CPU specialization of actual computation. */
+template <typename T>
+struct QuantEmuFunctor<CPUDevice, T> {
+  void operator()(const CPUDevice& d, int unsigned_data, int mbits, int rmode, int size, T* in, T* out) {
+     QuantEmuIntCPUKernel(mbits, rmode, size, in, out);
   }
 };
 
@@ -241,60 +259,277 @@ struct BlockCHW_QuantEmuFunctor<CPUDevice, T> {
   }
 };
 
+
+void QuantEmuLowpCPUKernel(
+	int mbits, 
+	int exp_bits, 
+	int rmode, 
+	const int size, 
+	const float *in, 
+	float *out) 
+{
+    int non_mant_bits = exp_bits + 1; /* exponent + sign */
+    if (mbits <= non_mant_bits) { printf("LPFP size cannot be <=5\n"); exit (0); }
+    int lshift = 10 - (mbits - non_mant_bits);
+    int rshift = lshift - 3; /* shift to preserve rounding bits */ 
+    unsigned short mask_mant = (unsigned short)(0xFFFF << lshift);
+    unsigned short mask_mant_grs = (unsigned short)(0xFFFF << rshift);
+    /* mask to extract G(gaurd), R (round), S (sticky) bits */ 
+    unsigned short lsbGRS = 0xF << rshift; 
+
+    unsigned short rne_mask = 0; /* round to nearest even mask */ 
+    unsigned short sr_mask = 0;  /* stochastic rounding mask */ 
+    if (rmode == ROUND_RNE) rne_mask = 1;  
+    if (rmode == ROUND_STOCHASTIC) sr_mask = 1;  
+
+    #pragma omp parallel for 
+    for (int i=0; i < size; i++) 
+    {
+      unsigned short hu = __float2half_rn(in[i]); 
+     
+      unsigned short mant_grs = (hu & mask_mant_grs); 
+      unsigned short not_denorm = ((((hu & 0x7FFF) >> 10) & 0x1F) > 0); 
+      unsigned short is_denorm = (not_denorm == 0)?1:0;
+
+      /* stochastic rounding */ 
+      unsigned short rand = (unsigned short) xorshf_rand();
+      /* apply stochastic rounding before truncation if sr_mask is enabled */ 
+      hu += not_denorm * sr_mask * (rand & 0xFF); 
+
+      /* round to nearest even after truncation if rne_mask is enabled */ 
+      unsigned short rmask_tie = ((mant_grs & lsbGRS) >> rshift);  
+      unsigned short rmask = (rmask_tie & 0x7);  
+      hu += rne_mask * (((rmask > 0x4) || (rmask_tie == 0xC) ) << lshift); 
+
+      /* stochastic round denormals --> nearest rounding */ 
+      hu += is_denorm * sr_mask * (((rmask > 0x4) || (rmask_tie == 0xC) ) << lshift); 
+
+       /* truncation */ 
+      hu = (hu & mask_mant); 
+      out[i] = __half2float(hu); 
+    }
+}
+
+void QuantEmuLowpCPUKernel(
+	int mbits, 
+	int exp_bits, 
+	int rmode, 
+	const int size, 
+	const Eigen::half *in, 
+	Eigen::half *out) 
+{
+    int non_mant_bits = exp_bits + 1; /* exponent + sign */
+    if (mbits <= non_mant_bits) { printf("LPFP size cannot be <=5\n"); exit (0); }
+    int lshift = 10 - (mbits - non_mant_bits);
+    int rshift = lshift - 3; /* shift to preserve rounding bits */ 
+    unsigned short mask_mant = (unsigned short)(0xFFFF << lshift);
+    unsigned short mask_mant_grs = (unsigned short)(0xFFFF << rshift);
+    /* mask to extract G(gaurd), R (round), S (sticky) bits */ 
+    unsigned short lsbGRS = 0xF << rshift; 
+
+    unsigned short rne_mask = 0; /* round to nearest even mask */ 
+    unsigned short sr_mask = 0;  /* stochastic rounding mask */ 
+    if (rmode == ROUND_RNE) rne_mask = 1;  
+    if (rmode == ROUND_STOCHASTIC) sr_mask = 1;  
+
+    #pragma omp parallel for 
+    for (int i=0; i < size; i++) 
+    {
+      unsigned short *inptr = (unsigned short *)in; 
+      unsigned short hu  = inptr[i];
+
+      unsigned short mant_grs = (hu & mask_mant_grs); 
+      unsigned short not_denorm = ((((hu & 0x7FFF) >> 10) & 0x1F) > 0); 
+      unsigned short is_denorm = (not_denorm == 0)?1:0;
+
+      /* stochastic rounding */ 
+      unsigned short rand = (unsigned short) xorshf_rand();
+      /* apply stochastic rounding before truncation if sr_mask is enabled */ 
+      hu += not_denorm * sr_mask * (rand & 0xFF); 
+
+      /* round to nearest even after truncation if rne_mask is enabled */ 
+      unsigned short rmask_tie = ((mant_grs & lsbGRS) >> rshift);  
+      unsigned short rmask = (rmask_tie & 0x7);  
+      hu += rne_mask * (((rmask > 0x4) || (rmask_tie == 0xC) ) << lshift); 
+
+      /* stochastic round denormals --> nearest rounding */ 
+      hu += is_denorm * sr_mask * (((rmask > 0x4) || (rmask_tie == 0xC) ) << lshift); 
+
+       /* truncation */ 
+      hu = (hu & mask_mant); 
+      out[i] = (Eigen::half)hu; 
+    }
+}
+
 template <typename T>
 struct LowpFloatQuantEmuFunctor <CPUDevice, T> {
   void operator()(const CPUDevice& d, int mbits, int exp_bits, int rmode, int size, const T* in, T* out) {
-
-    int non_mant_bits = exp_bits + 1; /* exponent + sign */
     //std::cout << "LowpFloatQuantEmuFunctor, non_mant_bits: " << non_mant_bits << ", mbits: " << mbits  << ", size: " << size << std::endl;
-    if (mbits <= non_mant_bits) { printf("LPFP size cannot be <=5\n"); exit (0); }
-    int shift = 10 - (mbits - non_mant_bits);
-    unsigned short lowpfp_mask = (unsigned short)(0xFFFF << shift);
-    __m128i lpmask = _mm_set1_epi16 (lowpfp_mask);
-
-    #pragma omp parallel for 
-    for (int a= 0; a < size; a+=8) {
-       __m256 v32 = _mm256_load_ps((float*)&in[a]);
-       __m128i v16l = _mm256_cvtps_ph(v32, ROUNDING_CTRL);
-       v16l = _mm_and_si128 (v16l, lpmask);
-       v32 = _mm256_cvtph_ps (v16l);
-       _mm256_store_ps((float*)&out[a], v32);
-    }
+    QuantEmuLowpCPUKernel( mbits, exp_bits, rmode, size, in, out);
   }
 };
+
+void QuantEmuLOG2CPUKernel(
+	const int size, 
+	const float *in, 
+	float *out) 
+{
+  unsigned int  mask_exp = (unsigned int)(0x7F800000);
+  int exp7b_max = 63; 
+  int exp7b_min = -62; 
+
+  for (int i = 0; i < size; i++) {
+      UFLOAT32 uf; 
+      uf.f = in[i];
+      int log2_7b = (((uf.u & mask_exp) >> 23) - 127); 
+      log2_7b = std::min(exp7b_max, log2_7b); 
+      log2_7b = std::max(exp7b_min, log2_7b); 
+      log2_7b += 127; 
+      unsigned int ival = (uf.u & 0x80000000) | (log2_7b << 23); 
+      uf.u = ival; 
+      out[i] = uf.f;
+  }
+}
+
+void QuantEmuLOG2CPUKernel(
+	const int size, 
+	const Eigen::half* in, 
+	Eigen::half* out) 
+{
+  unsigned short mask_exp = (unsigned short)(0x7C00);
+  short exp4b_max = 7; 
+  short exp4b_min = -6; 
+
+  for (int i = 0; i < size; i++) {
+      unsigned short *inptr = (unsigned short*)in; 
+      unsigned short hu = inptr[i];
+
+      short log2_4b = (((hu & mask_exp) >> 10) - 15); 
+      log2_4b = std::min(exp4b_max, log2_4b); 
+      log2_4b = std::max(exp4b_min, log2_4b); 
+      log2_4b += 15; 
+      unsigned short ival = (hu & 0x8000) | (log2_4b << 10); 
+      hu = ival;
+      out[i] = (Eigen::half) hu; 
+  }
+}
 
 template <typename T>
 struct Log2QuantEmuFunctor <CPUDevice, T> {
   void operator()(const CPUDevice& d, int size, const T* in, T* out) {
-     /* to be implemented, refer to CUDA version */ 
+    QuantEmuLOG2CPUKernel(size, in, out); 
   }
 };
+
+void QuantEmuPositCPUKernel(
+	int m_bits, 
+	int es_bits, 
+	int rmode, 
+	const int size, 
+	const float *in, 
+	float *out) 
+{
+  for (int i = 0; i < size; i++) {
+      float inval = in[i];
+      POSIT_UTYPE pval = pack_posit(unpack_float(inval), m_bits, es_bits, rmode); 
+      float outval = pack_float (unpack_posit(pval, m_bits, es_bits));  
+      out[i] = outval;
+  }
+}
+
+void QuantEmuPositCPUKernel(
+	int m_bits, 
+	int es_bits, 
+	int rmode, 
+	const int size, 
+	const Eigen::half *in, 
+	Eigen::half *out) 
+{
+  for (int i = 0; i < size; i++) {
+      unsigned short *inptr = (unsigned short *) in;
+      unsigned short inval = inptr[i];
+      POSIT_UTYPE pval = pack_posit(unpack_float(__half2float(inval)), m_bits, es_bits, rmode); 
+      float outval = pack_float (unpack_posit(pval, m_bits, es_bits));  
+      out[i] = (Eigen::half)__float2half_rn(outval);
+  }
+}
 
 template <typename T>
 struct PositQuantEmuFunctor <CPUDevice, T> {
   void operator()(const CPUDevice& d, int m_bits, int es_bits, int rmode, int size, const T* in, T* out) {
 
-    #pragma omp parallel for 
-    for (int a= 0; a < size; a++) {
-      POSIT_UTYPE pval =pack_posit(unpack_float(in[a]), m_bits, es_bits, rmode); 
-      out[a] = pack_float (unpack_posit(pval, m_bits, es_bits));  
-    }
+    QuantEmuPositCPUKernel(m_bits, es_bits, rmode, size, in, out); 
   }
 };
+
+void QuantEmuBfloat16CPUKernel(
+	const int size, 
+	const float *in, 
+	float *out) 
+{
+  int lshift = 16;
+  int rshift = lshift - 3; /* shift to preserve rounding bits */ 
+  unsigned int mask_mant = (unsigned int)(0xFFFFFFFF << lshift);
+  unsigned int mask_mant_grs = (unsigned int)(0xFFFFFFFF << rshift);
+   /* mask to extract G(gaurd), R (round), S (sticky) bits */ 
+  unsigned int lsbGRS = 0xF << rshift; 
+
+  for (int i = 0; i < size; i++) {
+      UFLOAT32 uf; 
+      float inval = in[i];
+      uf.f = inval; 
+     
+      unsigned int mant_grs = (uf.u & mask_mant_grs); 
+      /* truncation */ 
+      uf.u &= mask_mant; 
+
+      /* round to nearest even after truncation if rne_mask is enabled */ 
+      unsigned int rmask_tie = ((mant_grs & lsbGRS) >> rshift);  
+      unsigned int rmask = (rmask_tie & 0x7);  
+      uf.u += (((rmask > 0x4) || (rmask_tie == 0xC) ) << lshift); 
+
+      out[i] = uf.f;
+  }
+}
+
+void QuantEmuBfloat16CPUKernel(
+	const int size, 
+	const Eigen::half* in, 
+	Eigen::half* out) 
+{
+  int lshift = 16;
+  int rshift = lshift - 3; /* shift to preserve rounding bits */ 
+  unsigned int mask_mant = (unsigned int )(0xFFFFFFFF << lshift);
+  unsigned int mask_mant_grs = (unsigned int)(0xFFFFFFFF << rshift);
+   /* mask to extract G(gaurd), R (round), S (sticky) bits */ 
+  unsigned int lsbGRS = 0xF << rshift; 
+
+  for (int i = 0; i < size; i++) {
+      UFLOAT32 uf; 
+      unsigned short *inh = (unsigned short *) in;
+
+      float inval = __half2float(inh[i]);
+      uf.f = inval; 
+     
+      unsigned int mant_grs = (uf.u & mask_mant_grs); 
+      /* truncation */ 
+      uf.u &= mask_mant; 
+
+      /* round to nearest even after truncation if rne_mask is enabled */ 
+      unsigned int rmask_tie = ((mant_grs & lsbGRS) >> rshift);  
+      unsigned int rmask = (rmask_tie & 0x7);  
+      uf.u += (((rmask > 0x4) || (rmask_tie == 0xC) ) << lshift); 
+
+      out[i] = (Eigen::half)__float2half_rn(uf.f);
+  }
+}
 
 template <typename T>
 struct BfloatQuantEmuFunctor <CPUDevice, T> {
   void operator()(const CPUDevice& d, int size, const T* in, T* out) {
-#if 0
-    #pragma omp parallel for 
-    for (int a= 0; a < size; a++) {
-      POSIT_UTYPE pval =pack_posit(unpack_float(in[a]), m_bits, es_bits); 
-      out[a] = pack_float (unpack_posit(pval, m_bits, es_bits));  
-    }
-#endif 
+    QuantEmuBfloat16CPUKernel (size, in, out); 
   }
 };
-
 
 /* OpKernel definition.
  template parameter <T> is the datatype of the tensors.*/
@@ -473,7 +708,7 @@ class QuantEmuOp : public OpKernel {
 };
 
 template class QuantEmuOp<CPUDevice, float>; 
-//template class QuantEmuOp<CPUDevice, Eigen::half>; 
+template class QuantEmuOp<CPUDevice, Eigen::half>; 
 /* Register the CPU kernels. */
 #define REGISTER_CPU(T)                                          \
   template struct QuantEmuFunctor<CPUDevice, T>;		 \
@@ -488,7 +723,7 @@ template class QuantEmuOp<CPUDevice, float>;
       QuantEmuOp<CPUDevice, T>);
 
 REGISTER_CPU(float);
-//REGISTER_CPU(Eigen::half);
+REGISTER_CPU(Eigen::half);
 #ifdef GOOGLE_CUDA
 
 template class QuantEmuOp<GPUDevice, float>; 
