@@ -520,6 +520,8 @@ def _Conv2DGrad(op, grad):
      dformat = 'unknown'
 
 
+  quant_input_copy = int(os.getenv('QUANTEMU_ALLOCATE_COPY_INPUTS', 23))
+  quant_filter_copy = int(os.getenv('QUANTEMU_ALLOCATE_COPY_FILTERS', 23))
   quant_input_precision = int(os.getenv('QUANTEMU_PRECISION_CONV_INPUTS', 23))
   quant_filter_precision = int(os.getenv('QUANTEMU_PRECISION_CONV_FILTERS', 23))
   quant_grad_precision = int(os.getenv('QUANTEMU_PRECISION_CONV_GRADS', 23))
@@ -538,7 +540,8 @@ def _Conv2DGrad(op, grad):
                 round_mode=int(os.getenv('QUANTEMU_RMODE_GRADS', 0))) 
 
   if enable_quantop_input == 1: 
-     acts = quantemu_ops.quantize_emu(op.inputs[0],
+     if quant_input_copy == 1: 
+        acts = quantemu_ops.quantize_emu(op.inputs[0],
 		data_format=dformat, 
                 data_type=int(os.getenv('QUANTEMU_INPUT_DATA_TYPE', 0)),
                 precision=quant_input_precision, #int(os.getenv('QUANTEMU_PRECISION_CONV_INPUTS', 23)),
@@ -546,15 +549,22 @@ def _Conv2DGrad(op, grad):
                 channel_blocking_type=int(os.getenv('QUANTEMU_CBLOCK_TYPE_CONV_INPUTS', 0)),
                 channels_per_block=int(os.getenv('QUANTEMU_CBLOCK_SIZE_INPUTS', 0)),
                 round_mode=int(os.getenv('QUANTEMU_RMODE_INPUTS', 0))) 
-     filters = quantemu_ops.quantize_emu(op.inputs[1],
+     else: 
+        acts = op.inputs[0]; 
+     
+     if quant_filter_copy == 1: 
+        filters = quantemu_ops.quantize_emu(op.inputs[1],
 		data_format=dformat, 
-		allocate_copy=int(os.getenv('QUANTEMU_ALLOCATE_COPY_FILTERS', 0)), 
+	        allocate_copy=int(os.getenv('QUANTEMU_ALLOCATE_COPY_FILTERS', 0)), 
                 data_type=int(os.getenv('QUANTEMU_FILTER_DATA_TYPE', 0)),
                 precision=quant_filter_precision, #int(os.getenv('QUANTEMU_PRECISION_CONV_FILTERS', 23)),
                 exponent_bits=int(os.getenv('QUANTEMU_EXPBITS', 5)),
                 channel_blocking_type=int(os.getenv('QUANTEMU_CBLOCK_TYPE_CONV_FILTERS', 0)),
                 channels_per_block=int(os.getenv('QUANTEMU_CBLOCK_SIZE_FILTERS', 0)),
                 round_mode=int(os.getenv('QUANTEMU_RMODE_FILTERS', 0))) 
+     else :
+        filters = op.inputs[1]; 
+
      return [
          nn_ops.conv2d_backprop_input(
              shape_0,
