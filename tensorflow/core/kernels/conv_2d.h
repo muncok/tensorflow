@@ -304,6 +304,14 @@ struct ReverseTransformFilter {
                   typename TTypes<T, NDIMS>::Tensor out);
 };
 
+template <typename Device, typename T>
+struct ConvolutionFwdWithBfloatAcc {
+  void operator()(const Device& d, const T *input_data, const int64 input_batches, int64 input_height,
+                  int64 input_width, const int64 input_depth, const T* filter_data, const int64 filter_height,
+                  int64 filter_width, int64 filter_count, int stride_rows, int stride_cols,
+                  T* output_data, const int64 output_height, const int64 output_width );
+};
+
 }  // namespace functor
 
 template <class T>

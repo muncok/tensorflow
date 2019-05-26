@@ -24,7 +24,7 @@ REGISTER_OP("QuantizeEmu")
     .Attr("channel_blocking_type: int = 0")
     .Attr("channels_per_block: int = 0")
     .Attr("round_mode: int = 0")
-    .Attr("quantize_gradients: int = 0")
+    .Attr("log_tensor: int = 0")
     .SetShapeFn([](::tensorflow::shape_inference::InferenceContext* c) {
       c->set_output(0, c->input(0));
       return Status::OK(); 
@@ -546,7 +546,6 @@ class QuantEmuOp : public OpKernel {
     OP_REQUIRES_OK(context, context->GetAttr("channel_blocking_type", &block_type_));
     OP_REQUIRES_OK(context, context->GetAttr("channels_per_block", &block_size_));
     OP_REQUIRES_OK(context, context->GetAttr("round_mode", &round_mode_));
-    OP_REQUIRES_OK(context, context->GetAttr("quantize_gradients", &quantize_grad_));
 
     //std::cout << "data_format : " << data_format_ << ", lpdata_type: " << lpdata_type_ << ", mbits_: " << mbits_ << 
     // ", exponent_bits_: " << exponent_bits_ << ", quantize_grad_: " << quantize_grad_ << ", mbits_grad_ : " << mbits_grad_ << 
@@ -571,6 +570,8 @@ class QuantEmuOp : public OpKernel {
       CHECK(output_tensor.CopyFrom(input_tensor, input_tensor.shape()));
       context->set_output(0, output_tensor);
       poutput_tensor = &output_tensor; 
+      //context->set_output(0, context->input(0));
+      //poutput_tensor = (Tensor*)&(context->input(0)); 
     }
 
     /* Do the computation. */
@@ -704,7 +705,6 @@ class QuantEmuOp : public OpKernel {
   int block_type_;   
   int block_size_;
   int round_mode_;
-  int quantize_grad_;
 };
 
 template class QuantEmuOp<CPUDevice, float>; 

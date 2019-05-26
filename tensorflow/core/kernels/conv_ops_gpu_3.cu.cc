@@ -29,6 +29,8 @@ limitations under the License.
 #include "tensorflow/core/util/cuda_kernel_helper.h"
 #include "tensorflow/core/util/tensor_format.h"
 
+#include "tensorflow/core/util/padding.h"
+
 namespace tensorflow {
 
 typedef Eigen::GpuDevice GPUDevice;
@@ -998,6 +1000,151 @@ struct NCHWToNHWC<GPUDevice, T, NDIMS> {
   }
 };
 
+template <typename T>
+__global__ void Convolution_bfloat_acc (const T* input_data,
+                  const int64 input_batches, int64 input_height, int64 input_width,
+                  const int64 input_depth, const T* filter_data, const int64 filter_height,
+                  int64 filter_width, int64 filter_count, int64 stride_rows,
+                  int64 stride_cols, Padding padding, T* output_data,
+                  const int64 output_height, const int64 output_width) {
+
+    // The two different padding modes we support can be a bit confusing. SAME
+    // means we're trying to produce an output image that's the same size as the
+    // input. It's complicated by stride, which shrinks the output image by a
+    // a factor, but it means we end up sampling from outside the borders of the
+    // input. These out-of-bounds values are read as zeroes. VALID means only
+    // produce output values where the filters can read all their values from
+    // within the input image. It effectively removes the margins of the output
+    // image compared to the one produced by SAME. Stride complicates this
+    // definition though, because it can result in the right and bottom filter
+    // patches sampling from outside the borders if it's greater than 1.
+    // Most of the logic for sorting this all out is done before this function,
+    // when we calculate the output size, but the positioning of the origin of
+    // the filters is different between the two modes, since SAME positions the
+    // first filter off the edge of the input.
+    int filter_left_offset;
+    int filter_top_offset;
+    if (padding == VALID) {
+      filter_left_offset =
+          ((output_width - 1) * stride_cols + filter_width - input_width + 1) /
+          2;
+      filter_top_offset = ((output_height - 1) * stride_rows + filter_height -
+                           input_height + 1) /
+                          2;
+    } else {
+      filter_left_offset =
+          ((output_width - 1) * stride_cols + filter_width - input_width) / 2;
+      filter_top_offset =
+          ((output_height - 1) * stride_rows + filter_height - input_height) /
+          2;
+    }
+
+    // If we've got multiple images in our input, work through each of them.
+    for (int batch = 0; batch < input_batches; ++batch) {
+      // Walk through all the output image values, sliding the filter to
+      // different positions in the input.
+/*      for (int out_y = 0; out_y < output_height; ++out_y) {
+        for (int out_x = 0; out_x < output_width; ++out_x) {
+          // Each filter kernel produces one output channel.
+          for (int out_channel = 0; out_channel < filter_count; ++out_channel) {
+*/
+      for (int out_y = (blockIdx.y * blockDim.y) + threadIdx.y; out_y < output_height; out_y += blockDim.y * gridDim.y) {
+        for (int out_x = (blockIdx.z * blockDim.z) + threadIdx.z; out_x < output_width; out_x += blockDim.z * gridDim.z) {
+          // Each filter kernel produces one output channel.
+          for (int out_channel = (blockIdx.x * blockDim.x) + threadIdx.x; out_channel < filter_count; out_channel += blockDim.x * gridDim.x) {
+            // We're going to calculate a single output value, which means we
+            // need to multiply a three dimensional kernel of weights against
+            // the current location within the input image.
+            /*
+             *-------------------------------...
+             |\ ^
+             | \in_depth
+             |  \ v
+             |   *-------------------------------...
+             |   |            ^
+             |   |       in_y_origin
+             |   |            v   \
+             |   |<in_x_origin>*---*^
+             |   |            \|   |filter_height
+             .   |             *---*v
+             .   |             <--->
+             .         filter_width
+             .
+            */
+            const int in_x_origin = (out_x * stride_cols) - filter_left_offset;
+            const int in_y_origin = (out_y * stride_rows) - filter_top_offset;
+            T total(0);
+            for (int filter_y = 0; filter_y < filter_height; ++filter_y) {
+              for (int filter_x = 0; filter_x < filter_width; ++filter_x) {
+                for (int in_channel = 0; in_channel < input_depth; ++in_channel) {
+                  const int in_x = in_x_origin + filter_x;
+                  const int in_y = in_y_origin + filter_y;
+                  T input_value;
+                  // If the location is outside the bounds of the input image,
+                  // use zero as a default value.
+                  if ((in_x >= 0) && (in_x < input_width) && (in_y >= 0) &&
+                      (in_y < input_height)) {
+                    input_value =
+                        input_data[(batch * input_height * input_width *
+                                    input_depth) +
+                                   (in_y * input_width * input_depth) +
+                                   (in_x * input_depth) + in_channel];
+                  } else {
+                    input_value = T(0);
+                  }
+                  const T filter_value =
+                      filter_data[(filter_y * filter_width * input_depth *
+                                   filter_count) +
+                                  (filter_x * input_depth * filter_count) +
+                                  (in_channel * filter_count) + out_channel];
+                  total += (input_value * filter_value);
+                }
+              }
+            }
+            output_data[(batch * output_height * output_width * filter_count) +
+                        (out_y * output_width * filter_count) +
+                        (out_x * filter_count) + out_channel] = total;
+          }
+        }
+      }
+    }
+}
+
+template <typename T>
+struct ConvolutionFwdWithBfloatAcc<GPUDevice, T > {
+  typedef GPUDevice Device;
+  void operator()(const Device& d, const T *input_data, const int64 input_batches, int64 input_height, 
+		  int64 input_width, const int64 input_depth, const T* filter_data, const int64 filter_height,
+		  int64 filter_width, int64 filter_count, int stride_rows, int stride_cols,
+		  T* output_data, const int64 output_height, const int64 output_width ) {
+#if 0
+    size_t total_size = input_batches * filter_count * output_height * output_width; 
+    CudaLaunchConfig config = GetCudaLaunchConfig(total_size, d);
+    printf("Convolution Lanuch parameters : blocks=%d, threads=%d\n", config.block_count, config.thread_per_block);     
+
+    Convolution_bfloat_acc <T> 
+	<<<config.block_count, config.thread_per_block, 0, d.stream()>>>(input_data,
+                  input_batches, input_height, input_width,
+                  input_depth, filter_data, filter_height,
+                  filter_width, filter_count, stride_rows,
+                  stride_cols, VALID, output_data,
+                  output_height, output_width);
+#endif 
+    dim3 grid(filter_count, output_height, output_width);
+    dim3 block(1, 1, 1);
+    Convolution_bfloat_acc <T> 
+	<<<grid, block, 0, d.stream()>>>(input_data,
+                  input_batches, input_height, input_width,
+                  input_depth, filter_data, filter_height,
+                  filter_width, filter_count, stride_rows,
+                  stride_cols, VALID, output_data,
+                  output_height, output_width);
+    cudaStreamSynchronize(d.stream());
+  }
+};
+
+
+
 }  // namespace functor
 
 template struct functor::ShuffleAndReverse<GPUDevice, float, 4, int>;
@@ -1069,6 +1216,10 @@ template struct functor::NCHWToNHWC<GPUDevice, Eigen::half, 5>;
 
 template struct functor::PadInput<GPUDevice, float, int, 5>;
 template struct functor::PadInput<GPUDevice, Eigen::half, int, 5>;
+
+template struct functor::ConvolutionFwdWithBfloatAcc<GPUDevice, double>;
+template struct functor::ConvolutionFwdWithBfloatAcc<GPUDevice, float>;
+template struct functor::ConvolutionFwdWithBfloatAcc<GPUDevice, Eigen::half>;
 
 }  // namespace tensorflow
 

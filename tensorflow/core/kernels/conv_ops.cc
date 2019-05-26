@@ -678,7 +678,12 @@ void LaunchConv2DOp<GPUDevice, T>::operator()(
       in_cols = new_in_cols;
     }
   }
-
+#if 0
+  functor::ConvolutionFwdWithBfloatAcc<GPUDevice, T>() (ctx->eigen_device<GPUDevice>(),
+  		  input.template flat<T>().data(), in_batch, in_rows, in_cols, in_depths, 
+		  filter.template flat<T>().data(), patch_rows, patch_cols, filter.dim_size(3), row_stride, col_stride,
+                  output->template flat<T>().data(), out_rows, out_cols); 
+#else 
   if (data_format == FORMAT_NHWC) {
     // Convert the input tensor from NHWC to NCHW.
     TensorShape nchw_shape =
@@ -780,6 +785,8 @@ void LaunchConv2DOp<GPUDevice, T>::operator()(
       dtype,             // tensor datatype
       device_id,         // device_id
   };
+
+
   AlgorithmConfig algorithm_config;
   if (cudnn_use_autotune &&
       !AutoTuneConv::GetInstance()->Find(conv_parameters, &algorithm_config)) {
@@ -860,6 +867,7 @@ void LaunchConv2DOp<GPUDevice, T>::operator()(
   } else {
     *output = transformed_output;
   }
+#endif 
 }
 
 // Forward declarations of the functor specializations for GPU.

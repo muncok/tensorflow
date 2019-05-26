@@ -510,6 +510,7 @@ def _Conv2DGrad(op, grad):
 
   enable_quantop_grad  = int(os.getenv('ENABLE_QUANTOP_CONV_GRAD', 0))
   enable_quantop_input = int(os.getenv('ENABLE_QUANTOP_CONV', 0))
+  enable_quantop_wtgrad  = int(os.getenv('ENABLE_QUANTOP_CONV_WTGRAD', 0))
 
   dformat = 'channels_last' 
   inp_channels = op.inputs[0].get_shape()[3].value
@@ -525,6 +526,7 @@ def _Conv2DGrad(op, grad):
   quant_input_precision = int(os.getenv('QUANTEMU_PRECISION_CONV_INPUTS', 23))
   quant_filter_precision = int(os.getenv('QUANTEMU_PRECISION_CONV_FILTERS', 23))
   quant_grad_precision = int(os.getenv('QUANTEMU_PRECISION_CONV_GRADS', 23))
+  quant_wtgrad_precision = int(os.getenv('QUANTEMU_PRECISION_CONV_WTGRADS', 23))
   if inp_channels == 3 :
      quant_grad_precision = quant_input_precision = int(os.getenv('QUANTEMU_FIRST_LAYER_PRECISION', 23))
      quant_filter_precision = int(os.getenv('QUANTEMU_FIRST_LAYER_PRECISION', 23)) 
@@ -565,8 +567,7 @@ def _Conv2DGrad(op, grad):
      else :
         filters = op.inputs[1]; 
 
-     return [
-         nn_ops.conv2d_backprop_input(
+     outgrad = nn_ops.conv2d_backprop_input(
              shape_0,
              #op.inputs[1],
              filters,
@@ -575,8 +576,8 @@ def _Conv2DGrad(op, grad):
              strides=strides,
              padding=padding,
              use_cudnn_on_gpu=use_cudnn_on_gpu,
-             data_format=data_format),
-         nn_ops.conv2d_backprop_filter(
+             data_format=data_format)
+     wtgrad = nn_ops.conv2d_backprop_filter(
              #op.inputs[0],
              acts,
              shape_1,
@@ -586,7 +587,18 @@ def _Conv2DGrad(op, grad):
              padding=padding,
              use_cudnn_on_gpu=use_cudnn_on_gpu,
              data_format=data_format)
-     ]
+
+     if enable_quantop_wtgrad == 1: 
+        wtgrad = quantemu_ops.quantize_emu(wtgrad,
+		data_format=dformat, 
+                data_type=int(os.getenv('QUANTEMU_WTGRAD_DATA_TYPE', 0)),
+                precision=quant_wtgrad_precision, #int(os.getenv('QUANTEMU_PRECISION_CONV_GRADS', 23)),
+                exponent_bits=int(os.getenv('QUANTEMU_EXPBITS', 5)),
+                channel_blocking_type=int(os.getenv('QUANTEMU_CBLOCK_TYPE_CONV_WTGRADS', 0)),
+                channels_per_block=int(os.getenv('QUANTEMU_CBLOCK_SIZE_WTGRADS', 0)),
+                round_mode=int(os.getenv('QUANTEMU_RMODE_WTGRADS', 0))) 
+
+     return [outgrad, wtgrad ]
   else : # No Quantization 
      return [
          nn_ops.conv2d_backprop_input(

@@ -45,7 +45,59 @@ uint32_t _xorshf_rand(void) {
 
 	return result_plus;
 }
+#if 10
+__device__
+static uint32_t  s1[4] = {1387366120, 279844183, 888998500, 1099633400}; 
+__device__
+static uint32_t  s2[4] = {2034269327, 2125325156, 1209715489, 193165672};
+__device__
+static uint32_t  s3[4] = {1555452618, 650181557, 883695203, 62767784};
+__device__
+static uint32_t  s4[4] = {419524804, 2146478152, 480059239, 1468956197};
+__device__
+static uint32_t  s5[4] = {1252084877, 500390994, 977516591, 1950666000}; 
+__device__
+static uint32_t  s6[4] = {393659750, 834151069, 1477014702, 734008143};
+__device__
+static uint32_t  s7[4] = {1983400973, 116410309, 2110188261, 2019272068}; 
+__device__
+static uint32_t  s8[4] = {187709636, 28336299, 419632041, 1774181187}; 
+__device__
+static uint32_t  s9[4] = {702309618, 407781555, 1512057936, 1868769368}; 
+__device__
+static uint32_t  s10[4] = {510001215, 966559856, 776583255, 147562106};
+__device__
+static uint32_t  s11[4] = {127180605, 1881312534, 478635452, 814821902}; 
+__device__
+static uint32_t  s12[4] = {733990058, 1889991804, 1108257970, 1093480892}; 
+__device__
+static uint32_t  s13[4] = {427374380, 416747337, 558000409, 1594848927}; 
+__device__
+static uint32_t  s14[4] = {444870959, 1595722866, 1064124488, 363710254}; 
+__device__
+static uint32_t  s15[4] = {703721499, 389640783, 1002360059, 1427395742}; 
+__device__
+static uint32_t  s16[4] = {1295231497, 1254972431, 1423497865, 861918264};
 
+__device__
+static uint32_t  *sptr[16] = {s1, s2, s3, s4, s5, s6, s7, s8, s9, s10, s11, s12, s13, s14, s15, s16};
+__device__ 
+uint32_t _xorshf_rand_with_seed(uint32_t *ps) {
+	const uint32_t result_plus = ps[0] + ps[3];
+	const uint32_t t = ps[1] << 9;
+
+	ps[2] ^= ps[0];
+	ps[3] ^= ps[1];
+	ps[1] ^= ps[2];
+	ps[0] ^= ps[3];
+
+	ps[2] ^= t;
+
+	ps[3] = rotl_(ps[3], 11);
+
+	return result_plus;
+}
+#endif 
 #include "posit_impl_cuda.h" 
 
 __device__ 
@@ -620,8 +672,13 @@ void QuantEmuLowpCudaKernel(
       unsigned short is_denorm = (not_denorm == 0)?1:0;
       unsigned short must_round = not_denorm ? not_denorm : (((h.u >> 8)& 0x3) < 0x3); 
 
+#if 10
+      /* stochastic with 16 seeds */ 
+      int seed_index = (gid/16); 
+      unsigned short rand = (unsigned short) _xorshf_rand_with_seed(sptr[(seed_index%16)]);
+#endif 
       /* stochastic rounding */ 
-      unsigned short rand = (unsigned short) _xorshf_rand();
+//      unsigned short rand = (unsigned short) _xorshf_rand();
       /* apply stochastic rounding before truncation if sr_mask is enabled */ 
       //h.u += must_round * not_denorm * sr_mask * (rand & 0xFF); 
       h.u += not_denorm * sr_mask * (rand & 0xFF); 
@@ -682,9 +739,14 @@ void QuantEmuLowpCudaKernel(
       unsigned short not_denorm = ((((h.u & 0x7FFF) >> 10) & 0x1F) > 0); 
       unsigned short is_denorm = (not_denorm == 0)?1:0;
       unsigned short must_round = not_denorm ? not_denorm : (((h.u >> 8)& 0x3) < 0x3); 
-
+#if 10
+      /* stochastic with 16 seeds */ 
+      int seed_index = (gid/16); 
+      unsigned short rand = (unsigned short) _xorshf_rand_with_seed(sptr[(seed_index%16)]);
+#else 
       /* stochastic rounding */ 
       unsigned short rand = (unsigned short) _xorshf_rand();
+#endif 
       //unsigned short rand = (unsigned short) curand(&rand_state);
       /* apply stochastic rounding before truncation if sr_mask is enabled */ 
       //h.u += sr_mask * (rand & 0x00FF); 

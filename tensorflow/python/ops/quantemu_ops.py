@@ -25,8 +25,7 @@ def quantize_emu(
          exponent_bits=5, 
          channel_blocking_type=0, 
          channels_per_block=4096, 
-         round_mode=0, 
-         quantize_gradients=0):  
+         round_mode=0): 
 
   _quantemu_module = tf.load_op_library(os.path.join(tf.resource_loader.get_root_dir_with_all_resources(), '../../core/user_ops/quantemu.so'))
   return _quantemu_module.quantize_emu(
@@ -38,15 +37,14 @@ def quantize_emu(
 		exponent_bits, 
 		channel_blocking_type, 
 		channels_per_block, 
-		round_mode, 
-		quantize_gradients) 
+		round_mode)  
 
 @ops.RegisterGradient("QuantizeEmu")
 def _quantize_emu_grad(op, grad):
 
   # clipping gradient to  -1, 1
   #tf.clip_by_value(grad, -1, 1)
-
+  """
   if op.get_attr("quantize_gradients") is 1 : 
     _quantemu_module = tf.load_op_library(os.path.join(tf.resource_loader.get_root_dir_with_all_resources(), '../../core/user_ops/quantemu.so'))
     return [_quantemu_module.quantize_emu(
@@ -58,7 +56,7 @@ def _quantize_emu_grad(op, grad):
 		exponent_bits=op.get_attr("output_exponent_bits"), 
 		channel_blocking_type=int(os.getenv('QUANTEMU_CBLOCK_TYPE_GRADS', 0)), 
 		channels_per_block=int(os.getenv('QUANTEMU_CBLOCK_SIZE_GRADS', 4096)), 
-		round_mode=int(os.getenv('QUANTEMU_RMODE_GRADS', 0)), 
-		quantize_gradients=op.get_attr("quantize_gradients"))]
+		round_mode=int(os.getenv('QUANTEMU_RMODE_GRADS', 0)))]
   else :
-    return [grad]
+  """
+  return [grad]

@@ -232,8 +232,9 @@ class Conv(Layer):
                 exponent_bits=int(os.getenv('QUANTEMU_EXPBITS', 5)),
                 channel_blocking_type=int(os.getenv('QUANTEMU_CBLOCK_TYPE_CONV_INPUTS', 0)),
                 channels_per_block=int(os.getenv('QUANTEMU_CBLOCK_SIZE_INPUTS', 0)),
-                round_mode=int(os.getenv('QUANTEMU_RMODE_INPUTS', 0)), 
-                quantize_gradients=int(0))
+                round_mode=int(os.getenv('QUANTEMU_RMODE_INPUTS', 0))) 
+
+      #tf.add_to_collection (name='QUANTIZED_CONV_ACTIVATIONS', value=tf.identity(inputs_qs, 'quant_activations'))
 
       kernel_qs = quantemu_ops.quantize_emu(self.kernel,
 		data_format=self.data_format, 
@@ -243,10 +244,9 @@ class Conv(Layer):
                 exponent_bits=int(os.getenv('QUANTEMU_EXPBITS', 5)),
                 channel_blocking_type=int(os.getenv('QUANTEMU_CBLOCK_TYPE_CONV_FILTERS', 0)),
                 channels_per_block=int(os.getenv('QUANTEMU_CBLOCK_SIZE_FILTERS', 0)),
-                round_mode=int(os.getenv('QUANTEMU_RMODE_FILTERS', 0)), 
-                quantize_gradients=int(0)) 
+                round_mode=int(os.getenv('QUANTEMU_RMODE_FILTERS', 0))) 
 
-      tf.add_to_collection (name='QUANTIZED_VARIABLES', value=tf.identity(kernel_qs, 'quant_kernel'))
+      #tf.add_to_collection (name='QUANTIZED_CONV_WEIGHTS', value=tf.identity(kernel_qs, 'quant_weights'))
       outputs = self._convolution_op(inputs_qs, kernel_qs)
 
     else :
