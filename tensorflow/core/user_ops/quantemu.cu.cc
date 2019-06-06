@@ -770,6 +770,7 @@ void QuantEmuLowpCudaKernel(
   }
 }
 
+
 __global__ 
 void QuantEmuLOG2CudaKernel(
 	const int size, 
@@ -857,6 +858,7 @@ void QuantEmuPositCudaKernel(
 
 __global__ 
 void QuantEmuBfloat16CudaKernel(
+	int rmode, 
 	const int size, 
 	const float *in, 
 	float *out) 
@@ -868,25 +870,37 @@ void QuantEmuBfloat16CudaKernel(
    /* mask to extract G(gaurd), R (round), S (sticky) bits */ 
   unsigned int lsbGRS = 0xF << rshift; 
 
+  unsigned short rne_mask = 0; /* round to nearest even mask */ 
+  unsigned short sr_mask = 0;  /* stochastic rounding mask */ 
+  if (rmode == ROUND_RNE) rne_mask = 1;  
+  if (rmode == ROUND_STOCHASTIC) sr_mask = 1;  
+
   for (int gid = (blockIdx.x * blockDim.x) + threadIdx.x; gid < size; gid += blockDim.x * gridDim.x) {
       UFLOAT32 uf; 
       float inval = in[gid];
       uf.f = inval; 
-     
       unsigned int mant_grs = (uf.u & mask_mant_grs); 
+
+      /* stochastic with 16 seeds */ 
+      int seed_index = (gid/16); 
+      unsigned short rand = (unsigned short) _xorshf_rand_with_seed(sptr[(seed_index%16)]);
+      /* stochastic rounding with 16-bit random number */ 
+      uf.u += sr_mask * rand; 
+    
       /* truncation */ 
       uf.u &= mask_mant; 
 
       /* round to nearest even after truncation if rne_mask is enabled */ 
       unsigned int rmask_tie = ((mant_grs & lsbGRS) >> rshift);  
       unsigned int rmask = (rmask_tie & 0x7);  
-      uf.u += (((rmask > 0x4) || (rmask_tie == 0xC) ) << lshift); 
+      uf.u += rne_mask * (((rmask > 0x4) || (rmask_tie == 0xC) ) << lshift); 
 
       out[gid] = uf.f;
   }
 }
 __global__ 
 void QuantEmuBfloat16CudaKernel(
+	int rmode, 
 	const int size, 
 	const Eigen::half* in, 
 	Eigen::half* out) 
@@ -898,22 +912,72 @@ void QuantEmuBfloat16CudaKernel(
    /* mask to extract G(gaurd), R (round), S (sticky) bits */ 
   unsigned int lsbGRS = 0xF << rshift; 
 
+  unsigned short rne_mask = 0; /* round to nearest even mask */ 
+  unsigned short sr_mask = 0;  /* stochastic rounding mask */ 
+  if (rmode == ROUND_RNE) rne_mask = 1;  
+  if (rmode == ROUND_STOCHASTIC) sr_mask = 1;  
+
   for (int gid = (blockIdx.x * blockDim.x) + threadIdx.x; gid < size; gid += blockDim.x * gridDim.x) {
       UFLOAT32 uf; 
 
       float inval = __half2float(in[gid]);
       uf.f = inval; 
-     
       unsigned int mant_grs = (uf.u & mask_mant_grs); 
+
+      /* stochastic with 16 seeds */ 
+      int seed_index = (gid/16); 
+      unsigned short rand = (unsigned short) _xorshf_rand_with_seed(sptr[(seed_index%16)]);
+      /* stochastic rounding with 16-bit random number */ 
+      uf.u += sr_mask * rand; 
+
       /* truncation */ 
       uf.u &= mask_mant; 
 
       /* round to nearest even after truncation if rne_mask is enabled */ 
       unsigned int rmask_tie = ((mant_grs & lsbGRS) >> rshift);  
       unsigned int rmask = (rmask_tie & 0x7);  
-      uf.u += (((rmask > 0x4) || (rmask_tie == 0xC) ) << lshift); 
+      uf.u += rne_mask * (((rmask > 0x4) || (rmask_tie == 0xC) ) << lshift); 
 
       out[gid] = __float2half_rn(uf.f);
+  }
+}
+/* 
+ * Emulate FP16 without denormals. 
+ */
+__global__ 
+void QuantEmuModFP16CudaKernel(
+	const int size, 
+	const float *in, 
+	float *out) 
+{
+  for (int gid = (blockIdx.x * blockDim.x) + threadIdx.x; gid < size; gid += blockDim.x * gridDim.x) {
+      __half_t h; 
+      float inval = in[gid];
+      __half  hval = __float2half_rn(inval); 
+      h.f = hval;
+      unsigned short not_denorm = ((((h.u & 0x7FFF) >> 10) & 0x1F) > 0); 
+      unsigned short is_denorm = (not_denorm == 0)?1:0;
+      h.u *= !is_denorm; 
+      float outval = __half2float(h.f);
+      out[gid] = outval;
+  }
+}
+__global__ 
+void QuantEmuModFP16CudaKernel(
+	const int size, 
+	const Eigen::half* in, 
+	Eigen::half* out) 
+{
+  for (int gid = (blockIdx.x * blockDim.x) + threadIdx.x; gid < size; gid += blockDim.x * gridDim.x) {
+      __half_t h; 
+      Eigen::half inval = in[gid];
+      __half  hval = inval; 
+      h.f = hval;
+      unsigned short not_denorm = ((((h.u & 0x7FFF) >> 10) & 0x1F) > 0); 
+      unsigned short is_denorm = (not_denorm == 0)?1:0;
+      h.u *= !is_denorm;
+      Eigen::half outval = h.f; 
+      out[gid] = outval;
   }
 }
 
@@ -1148,11 +1212,11 @@ template struct PositQuantEmuFunctor<GPUDevice, Eigen::half>;
 
 template <typename T>
 struct BfloatQuantEmuFunctor <GPUDevice, T> {
-  void operator()(const GPUDevice& d, int size, const T* in, T* out) {
+  void operator()(const GPUDevice& d, int rmode, int size, const T* in, T* out) {
     //std::cout << " Inside the LowpFloatQuantEmuFunctor GPU version "<< size  << std::endl; 
     int block = CUBLOCK_SIZE; 
     int grid = ( size + (CUBLOCK_SIZE-1))/CUBLOCK_SIZE; 
-    QuantEmuBfloat16CudaKernel <<<grid, block, 0, d.stream()>>>(size, in, out); 
+    QuantEmuBfloat16CudaKernel <<<grid, block, 0, d.stream()>>>(rmode, size, in, out); 
     //cudaStreamSynchronize(d.stream());
     //cudaDeviceSynchronize();
   }
@@ -1160,5 +1224,20 @@ struct BfloatQuantEmuFunctor <GPUDevice, T> {
 
 template struct BfloatQuantEmuFunctor<GPUDevice, float>;
 template struct BfloatQuantEmuFunctor<GPUDevice, Eigen::half>;
+
+template <typename T>
+struct ModFP16QuantEmuFunctor <GPUDevice, T> {
+  void operator()(const GPUDevice& d, int size, const T* in, T* out) {
+    //std::cout << " Inside the LowpFloatQuantEmuFunctor GPU version "<< size  << std::endl; 
+    int block = CUBLOCK_SIZE; 
+    int grid = ( size + (CUBLOCK_SIZE-1))/CUBLOCK_SIZE; 
+    QuantEmuModFP16CudaKernel<<<grid, block, 0, d.stream()>>>(size, in, out); 
+    //cudaStreamSynchronize(d.stream());
+    //cudaDeviceSynchronize();
+  }
+};
+
+template struct ModFP16QuantEmuFunctor<GPUDevice, float>;
+template struct ModFP16QuantEmuFunctor<GPUDevice, Eigen::half>;
 
 #endif  // GOOGLE_CUDA

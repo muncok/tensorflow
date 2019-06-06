@@ -888,7 +888,7 @@ def _BaseFusedBatchNormGrad(op, use_v2, *grad):
   if enable_quantop_grad == 1: 
      grad_y = quantemu_ops.quantize_emu(grad_y,
 		data_format=dformat, 
-                data_type=int(os.getenv('QUANTEMU_GRAD_DATA_TYPE', 0)),
+                data_type=int(os.getenv('QUANTEMU_BNORM_DATA_TYPE', 0)),
                 precision=int(os.getenv('QUANTEMU_PRECISION_BNORM_GRADS', 23)),
                 exponent_bits=int(os.getenv('QUANTEMU_EXPBITS', 5)),
                 channel_blocking_type=int(os.getenv('QUANTEMU_CBLOCK_TYPE_BNORM_GRADS', 0)),
@@ -898,7 +898,7 @@ def _BaseFusedBatchNormGrad(op, use_v2, *grad):
   if enable_quantop_input == 1: 
      x = quantemu_ops.quantize_emu(x,
 		data_format=dformat, 
-                data_type=int(os.getenv('QUANTEMU_INPUT_DATA_TYPE', 0)),
+                data_type=int(os.getenv('QUANTEMU_BNORM_DATA_TYPE', 0)),
                 precision=int(os.getenv('QUANTEMU_PRECISION_BNORM_INPUTS', 23)),
                 exponent_bits=int(os.getenv('QUANTEMU_EXPBITS', 5)),
                 channel_blocking_type=int(os.getenv('QUANTEMU_CBLOCK_TYPE_BNORM_INPUTS', 0)),

@@ -574,6 +574,17 @@ def _CoshGrad(op, grad):
 def _TanhGrad(op, grad):
   """Returns grad * (1 - tanh(x) * tanh(x))."""
   y = op.outputs[0]  # y = tanh(x)
+  enable_quantop_tanh = int(os.getenv('ENABLE_QUANTOP_TANH', 0))
+  enable_quantop_tanh_grad = int(os.getenv('ENABLE_QUANTOP_TANH_GRAD', 0))
+  if enable_quantop_tanh_grad == 1 and enable_quantop_tanh == 1 : 
+     grad = quantemu_ops.quantize_emu(grad,
+		data_format='unknown', 
+                allocate_copy=int(0), 
+                data_type=int(os.getenv('QUANTEMU_TANH_DATA_TYPE', 0)),
+                precision=int(os.getenv('QUANTEMU_PRECISION_TANH_GRADS', 23)),
+                exponent_bits=int(os.getenv('QUANTEMU_EXPBITS', 5)),
+                round_mode=int(os.getenv('QUANTEMU_RMODE_GRADS', 0))) 
+
   with ops.control_dependencies([grad]):
     y = math_ops.conj(y)
     return gen_math_ops.tanh_grad(y, grad)
@@ -782,6 +793,17 @@ def _PolygammaGrad(op, grad):
 def _SigmoidGrad(op, grad):
   """Returns grad * sigmoid(x) * (1 - sigmoid(x))."""
   y = op.outputs[0]  # y = sigmoid(x)
+  enable_quantop_sigmoid = int(os.getenv('ENABLE_QUANTOP_SIGMOID', 0))
+  enable_quantop_sigmoid_grad = int(os.getenv('ENABLE_QUANTOP_SIGMOID_GRAD', 0))
+  if enable_quantop_sigmoid_grad == 1 and enable_quantop_sigmoid == 1 : 
+     grad = quantemu_ops.quantize_emu(grad,
+		data_format='unknown', 
+                allocate_copy=int(0), 
+                data_type=int(os.getenv('QUANTEMU_SIGMOID_DATA_TYPE', 0)),
+                precision=int(os.getenv('QUANTEMU_PRECISION_SIGMOID_GRADS', 23)),
+                exponent_bits=int(os.getenv('QUANTEMU_EXPBITS', 5)),
+                round_mode=int(os.getenv('QUANTEMU_RMODE_GRADS', 0))) 
+
   with ops.control_dependencies([grad]):
     y = math_ops.conj(y)
     return gen_math_ops.sigmoid_grad(y, grad)
@@ -932,6 +954,18 @@ def _MulGrad(op, grad):
   """The gradient of scalar multiplication."""
   x = op.inputs[0]
   y = op.inputs[1]
+
+  enable_quantop_mul = int(os.getenv('ENABLE_QUANTOP_MUL', 0))
+  enable_quantop_mul_grad = int(os.getenv('ENABLE_QUANTOP_MUL_GRAD', 0))
+  if enable_quantop_mul_grad == 1 and enable_quantop_mul == 1 : 
+     grad = quantemu_ops.quantize_emu(grad,
+		data_format='unknown', 
+                allocate_copy=int(os.getenv('QUANTEMU_ALLOCATE_COPY_GRADS', 0)),
+                data_type=int(os.getenv('QUANTEMU_MUL_DATA_TYPE', 0)),
+                precision=int(os.getenv('QUANTEMU_PRECISION_MUL_GRADS', 23)),
+                exponent_bits=int(os.getenv('QUANTEMU_EXPBITS', 5)),
+                round_mode=int(os.getenv('QUANTEMU_RMODE_GRADS', 0))) 
+
   if (isinstance(grad, ops.Tensor) and
       _ShapesFullySpecifiedAndEqual(x, y, grad) and
       grad.dtype in (dtypes.int32, dtypes.float32)):
@@ -1131,7 +1165,7 @@ def _MatMulGrad(op, grad):
 
   enable_quantop_matmul = int(os.getenv('ENABLE_QUANTOP_MATMUL', 0))
   enable_quantop_matmul_grad = int(os.getenv('ENABLE_QUANTOP_MATMUL_GRAD', 0))
-  if enable_quantop_matmul_grad == 1: 
+  if enable_quantop_matmul_grad == 1 and enable_quantop_matmul == 1 : 
      grad = quantemu_ops.quantize_emu(grad,
 		data_format='unknown', 
                 allocate_copy=int(os.getenv('QUANTEMU_ALLOCATE_COPY_GRADS', 0)),
@@ -1139,22 +1173,6 @@ def _MatMulGrad(op, grad):
                 precision=int(os.getenv('QUANTEMU_PRECISION_MATMUL_GRADS', 23)),
                 exponent_bits=int(os.getenv('QUANTEMU_EXPBITS', 5)),
                 round_mode=int(os.getenv('QUANTEMU_RMODE_GRADS', 0))) 
-
-  if enable_quantop_matmul == 1: 
-     a = quantemu_ops.quantize_emu(a,
-		data_format='unknown', 
-                allocate_copy=int(os.getenv('QUANTEMU_ALLOCATE_COPY_INPUTS', 0)),
-                data_type=int(os.getenv('QUANTEMU_INPUT_DATA_TYPE', 0)),
-                precision=int(os.getenv('QUANTEMU_PRECISION_MATMUL_INPUTS', 23)),
-                exponent_bits=int(os.getenv('QUANTEMU_EXPBITS', 5)),
-                round_mode=int(os.getenv('QUANTEMU_RMODE_INPUTS', 0))) 
-     b = quantemu_ops.quantize_emu(b,
-		data_format='unknown', 
-                allocate_copy=int(os.getenv('QUANTEMU_ALLOCATE_COPY_FILTERS', 0)),
-                data_type=int(os.getenv('QUANTEMU_FILTER_DATA_TYPE', 0)),
-                precision=int(os.getenv('QUANTEMU_PRECISION_MATMUL_FILTERS', 23)),
-                exponent_bits=int(os.getenv('QUANTEMU_EXPBITS', 5)),
-                round_mode=int(os.getenv('QUANTEMU_RMODE_FILTERS', 0))) 
 
   if not t_a and not t_b:
     grad_a = gen_math_ops.mat_mul(grad, b, transpose_b=True)

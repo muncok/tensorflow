@@ -201,6 +201,23 @@ def divide(x, y, name=None):
 
 @tf_export("math.multiply", "multiply")
 def multiply(x, y, name=None):
+  enable_quantop_mul = int(os.getenv('ENABLE_QUANTOP_MUL', 0))
+  if enable_quantop_mul == 1: 
+     x = quantemu_ops.quantize_emu(x,
+		data_format='unknown', 
+                allocate_copy=int(os.getenv('QUANTEMU_ALLOCATE_COPY_INPUTS', 0)),
+                data_type=int(os.getenv('QUANTEMU_MUL_DATA_TYPE', 0)),
+                precision=int(os.getenv('QUANTEMU_PRECISION_MUL_INPUTS', 23)),
+                exponent_bits=int(os.getenv('QUANTEMU_EXPBITS', 5)),
+                round_mode=int(os.getenv('QUANTEMU_RMODE_INPUTS', 0))) 
+     y = quantemu_ops.quantize_emu(y,
+		data_format='unknown', 
+                allocate_copy=int(os.getenv('QUANTEMU_ALLOCATE_COPY_FILTERS', 0)),
+                data_type=int(os.getenv('QUANTEMU_MUL_DATA_TYPE', 0)),
+                precision=int(os.getenv('QUANTEMU_PRECISION_MUL_INPUTS', 23)),
+                exponent_bits=int(os.getenv('QUANTEMU_EXPBITS', 5)),
+                round_mode=int(os.getenv('QUANTEMU_RMODE_INPUTS', 0))) 
+
   return gen_math_ops.mul(x, y, name)
 
 
@@ -2010,8 +2027,7 @@ def matmul(a,
                 data_type=int(os.getenv('QUANTEMU_INPUT_DATA_TYPE', 0)),
                 precision=int(os.getenv('QUANTEMU_PRECISION_MATMUL_INPUTS', 23)),
                 exponent_bits=int(os.getenv('QUANTEMU_EXPBITS', 5)),
-                round_mode=int(os.getenv('QUANTEMU_RMODE_INPUTS', 0)),
-                quantize_gradients=int(0))
+                round_mode=int(os.getenv('QUANTEMU_RMODE_INPUTS', 0)))
 
       b = quantemu_ops.quantize_emu(b,
                 data_format='unknown',
@@ -2019,8 +2035,7 @@ def matmul(a,
                 data_type=int(os.getenv('QUANTEMU_FILTER_DATA_TYPE', 0)),
                 precision=int(os.getenv('QUANTEMU_PRECISION_MATMUL_FILTERS', 23)),
                 exponent_bits=int(os.getenv('QUANTEMU_EXPBITS', 5)),
-                round_mode=int(os.getenv('QUANTEMU_RMODE_FILTERS', 0)),
-                quantize_gradients=int(0))
+                round_mode=int(os.getenv('QUANTEMU_RMODE_FILTERS', 0)))
 
     # TODO(apassos) remove _shape_tuple here when it is not needed.
     a_shape = a._shape_tuple()  # pylint: disable=protected-access
@@ -2299,6 +2314,16 @@ def sigmoid(x, name=None):
   Equivalent to scipy.special.expit
   @end_compatibility
   """
+  enable_quantop_sigmoid = int(os.getenv('ENABLE_QUANTOP_SIGMOID', 0))
+  if enable_quantop_sigmoid == 1: 
+     x = quantemu_ops.quantize_emu(x,
+		data_format='unknown', 
+                allocate_copy=int(os.getenv('QUANTEMU_ALLOCATE_COPY_INPUTS', 0)),
+                data_type=int(os.getenv('QUANTEMU_SIGMOID_DATA_TYPE', 0)),
+                precision=int(os.getenv('QUANTEMU_PRECISION_SIGMOID_INPUTS', 23)),
+                exponent_bits=int(os.getenv('QUANTEMU_EXPBITS', 5)),
+                round_mode=int(os.getenv('QUANTEMU_RMODE_INPUTS', 0))) 
+
   with ops.name_scope(name, "Sigmoid", [x]) as name:
     x = ops.convert_to_tensor(x, name="x")
     return gen_math_ops.sigmoid(x, name=name)
@@ -2336,6 +2361,16 @@ def tanh(x, name=None):
   Returns:
     A Tensor or SparseTensor respectively with the same type as `x`.
   """
+  enable_quantop_tanh = int(os.getenv('ENABLE_QUANTOP_TANH', 0))
+  if enable_quantop_tanh == 1: 
+     x = quantemu_ops.quantize_emu(x,
+		data_format='unknown', 
+                allocate_copy=int(os.getenv('QUANTEMU_ALLOCATE_COPY_INPUTS', 0)),
+                data_type=int(os.getenv('QUANTEMU_TANH_DATA_TYPE', 0)),
+                precision=int(os.getenv('QUANTEMU_PRECISION_TANH_INPUTS', 23)),
+                exponent_bits=int(os.getenv('QUANTEMU_EXPBITS', 5)),
+                round_mode=int(os.getenv('QUANTEMU_RMODE_INPUTS', 0))) 
+
   with ops.name_scope(name, "Tanh", [x]) as name:
     if isinstance(x, sparse_tensor.SparseTensor):
       x_tanh = gen_math_ops.tanh(x.values, name=name)

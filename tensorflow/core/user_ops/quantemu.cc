@@ -65,6 +65,7 @@ static inline uint32_t rotl(const uint32_t x, int k) {
 	return (x << k) | (x >> (32 - k));
 }
 
+
 static uint32_t  s_[4] = {0x76B5DBC3, 0x532CB7BF, 0x6AFA41C3, 0x28DBD9F7};
 
 uint32_t xorshf_rand(void) {
@@ -82,6 +83,40 @@ uint32_t xorshf_rand(void) {
 
 	return result_plus;
 }
+static uint32_t  s1_[4] = {1387366120, 279844183, 888998500, 1099633400}; 
+static uint32_t  s2_[4] = {2034269327, 2125325156, 1209715489, 193165672};
+static uint32_t  s3_[4] = {1555452618, 650181557, 883695203, 62767784};
+static uint32_t  s4_[4] = {419524804, 2146478152, 480059239, 1468956197};
+static uint32_t  s5_[4] = {1252084877, 500390994, 977516591, 1950666000}; 
+static uint32_t  s6_[4] = {393659750, 834151069, 1477014702, 734008143};
+static uint32_t  s7_[4] = {1983400973, 116410309, 2110188261, 2019272068}; 
+static uint32_t  s8_[4] = {187709636, 28336299, 419632041, 1774181187}; 
+static uint32_t  s9_[4] = {702309618, 407781555, 1512057936, 1868769368}; 
+static uint32_t  s10_[4] = {510001215, 966559856, 776583255, 147562106};
+static uint32_t  s11_[4] = {127180605, 1881312534, 478635452, 814821902}; 
+static uint32_t  s12_[4] = {733990058, 1889991804, 1108257970, 1093480892}; 
+static uint32_t  s13_[4] = {427374380, 416747337, 558000409, 1594848927}; 
+static uint32_t  s14_[4] = {444870959, 1595722866, 1064124488, 363710254}; 
+static uint32_t  s15_[4] = {703721499, 389640783, 1002360059, 1427395742}; 
+static uint32_t  s16_[4] = {1295231497, 1254972431, 1423497865, 861918264};
+
+static uint32_t  *sptr_[16] = {s1_, s2_, s3_, s4_, s5_, s6_, s7_, s8_, s9_, s10_, s11_, s12_, s13_, s14_, s15_, s16_};
+uint32_t xorshf_rand_with_seed(uint32_t *ps) {
+	const uint32_t result_plus = ps[0] + ps[3];
+	const uint32_t t = ps[1] << 9;
+
+	ps[2] ^= ps[0];
+	ps[3] ^= ps[1];
+	ps[1] ^= ps[2];
+	ps[0] ^= ps[3];
+
+	ps[2] ^= t;
+
+	ps[3] = rotl(ps[3], 11);
+
+	return result_plus;
+}
+
 /* Posit implementation */ 
 #include "posit_impl.h" 
 
@@ -292,7 +327,10 @@ void QuantEmuLowpCPUKernel(
       unsigned short is_denorm = (not_denorm == 0)?1:0;
 
       /* stochastic rounding */ 
-      unsigned short rand = (unsigned short) xorshf_rand();
+//      unsigned short rand = (unsigned short) xorshf_rand();
+      int seed_index = (i/16); 
+      unsigned short rand = (unsigned short) xorshf_rand_with_seed(sptr_[(seed_index%16)]);
+
       /* apply stochastic rounding before truncation if sr_mask is enabled */ 
       hu += not_denorm * sr_mask * (rand & 0xFF); 
 
@@ -343,7 +381,10 @@ void QuantEmuLowpCPUKernel(
       unsigned short is_denorm = (not_denorm == 0)?1:0;
 
       /* stochastic rounding */ 
-      unsigned short rand = (unsigned short) xorshf_rand();
+      //unsigned short rand = (unsigned short) xorshf_rand();
+      int seed_index = (i/16); 
+      unsigned short rand = (unsigned short) xorshf_rand_with_seed(sptr_[(seed_index%16)]);
+
       /* apply stochastic rounding before truncation if sr_mask is enabled */ 
       hu += not_denorm * sr_mask * (rand & 0xFF); 
 
@@ -463,6 +504,7 @@ struct PositQuantEmuFunctor <CPUDevice, T> {
 };
 
 void QuantEmuBfloat16CPUKernel(
+        int rmode, 
 	const int size, 
 	const float *in, 
 	float *out) 
@@ -474,25 +516,37 @@ void QuantEmuBfloat16CPUKernel(
    /* mask to extract G(gaurd), R (round), S (sticky) bits */ 
   unsigned int lsbGRS = 0xF << rshift; 
 
+  unsigned short rne_mask = 0; /* round to nearest even mask */ 
+  unsigned short sr_mask = 0;  /* stochastic rounding mask */ 
+  if (rmode == ROUND_RNE) rne_mask = 1;  
+  if (rmode == ROUND_STOCHASTIC) sr_mask = 1;  
+
   for (int i = 0; i < size; i++) {
       UFLOAT32 uf; 
       float inval = in[i];
       uf.f = inval; 
      
       unsigned int mant_grs = (uf.u & mask_mant_grs); 
+      /* stochastic with 16 seeds */ 
+      int seed_index = (i/16); 
+      unsigned short rand = (unsigned short) xorshf_rand_with_seed(sptr_[(seed_index%16)]);
+      /* stochastic rounding with 16-bit random number */ 
+      uf.u += sr_mask * rand; 
+
       /* truncation */ 
       uf.u &= mask_mant; 
 
       /* round to nearest even after truncation if rne_mask is enabled */ 
       unsigned int rmask_tie = ((mant_grs & lsbGRS) >> rshift);  
       unsigned int rmask = (rmask_tie & 0x7);  
-      uf.u += (((rmask > 0x4) || (rmask_tie == 0xC) ) << lshift); 
+      uf.u += rne_mask * (((rmask > 0x4) || (rmask_tie == 0xC) ) << lshift); 
 
       out[i] = uf.f;
   }
 }
 
 void QuantEmuBfloat16CPUKernel(
+        int rmode, 
 	const int size, 
 	const Eigen::half* in, 
 	Eigen::half* out) 
@@ -504,6 +558,11 @@ void QuantEmuBfloat16CPUKernel(
    /* mask to extract G(gaurd), R (round), S (sticky) bits */ 
   unsigned int lsbGRS = 0xF << rshift; 
 
+  unsigned short rne_mask = 0; /* round to nearest even mask */ 
+  unsigned short sr_mask = 0;  /* stochastic rounding mask */ 
+  if (rmode == ROUND_RNE) rne_mask = 1;  
+  if (rmode == ROUND_STOCHASTIC) sr_mask = 1;  
+
   for (int i = 0; i < size; i++) {
       UFLOAT32 uf; 
       unsigned short *inh = (unsigned short *) in;
@@ -512,13 +571,19 @@ void QuantEmuBfloat16CPUKernel(
       uf.f = inval; 
      
       unsigned int mant_grs = (uf.u & mask_mant_grs); 
+      /* stochastic with 16 seeds */ 
+      int seed_index = (i/16); 
+      unsigned short rand = (unsigned short) xorshf_rand_with_seed(sptr_[(seed_index%16)]);
+      /* stochastic rounding with 16-bit random number */ 
+      uf.u += sr_mask * rand; 
+
       /* truncation */ 
       uf.u &= mask_mant; 
 
       /* round to nearest even after truncation if rne_mask is enabled */ 
       unsigned int rmask_tie = ((mant_grs & lsbGRS) >> rshift);  
       unsigned int rmask = (rmask_tie & 0x7);  
-      uf.u += (((rmask > 0x4) || (rmask_tie == 0xC) ) << lshift); 
+      uf.u += rne_mask * (((rmask > 0x4) || (rmask_tie == 0xC) ) << lshift); 
 
       out[i] = (Eigen::half)__float2half_rn(uf.f);
   }
@@ -526,10 +591,54 @@ void QuantEmuBfloat16CPUKernel(
 
 template <typename T>
 struct BfloatQuantEmuFunctor <CPUDevice, T> {
-  void operator()(const CPUDevice& d, int size, const T* in, T* out) {
-    QuantEmuBfloat16CPUKernel (size, in, out); 
+  void operator()(const CPUDevice& d, int rmode, int size, const T* in, T* out) {
+    QuantEmuBfloat16CPUKernel (rmode, size, in, out); 
   }
 };
+
+void QuantEmuModFP16CPUKernel(
+	const int size, 
+	const float *in, 
+	float *out) 
+{
+    #pragma omp parallel for 
+    for (int i=0; i < size; i++) 
+    {
+      unsigned short hu = __float2half_rn(in[i]); 
+      unsigned short not_denorm = ((((hu & 0x7FFF) >> 10) & 0x1F) > 0); 
+      unsigned short is_denorm = (not_denorm == 0)?1:0;
+       /* flush denormals to zero */ 
+      hu *= !is_denorm;  
+      out[i] = __half2float(hu); 
+    }
+}
+
+void QuantEmuModFP16CPUKernel(
+	const int size, 
+	const Eigen::half *in, 
+	Eigen::half *out) 
+{
+    #pragma omp parallel for 
+    for (int i=0; i < size; i++) 
+    {
+      unsigned short *inptr = (unsigned short *)in; 
+      unsigned short hu  = inptr[i];
+      unsigned short not_denorm = ((((hu & 0x7FFF) >> 10) & 0x1F) > 0); 
+      unsigned short is_denorm = (not_denorm == 0)?1:0;
+      /* flush denormals to zero */ 
+      hu *= !is_denorm; 
+      out[i] = (Eigen::half)hu; 
+    }
+}
+
+
+template <typename T>
+struct ModFP16QuantEmuFunctor<CPUDevice, T> {
+  void operator()(const CPUDevice& d, int size, const T* in, T* out) {
+    QuantEmuModFP16CPUKernel(size, in, out); 
+  }
+};
+
 
 /* OpKernel definition.
  template parameter <T> is the datatype of the tensors.*/
@@ -688,13 +797,22 @@ class QuantEmuOp : public OpKernel {
   	/* standard bfloat16 with RNE, mbits is ignored */ 
         BfloatQuantEmuFunctor<Device, T>()(
           context->eigen_device<Device>(),
+	  round_mode_, 
           static_cast<int>(input_tensor.NumElements()),
           input_tensor.flat<T>().data(),
           poutput_tensor->flat<T>().data());
       }
       break; 
-
-    }
+      case MODFP16: 
+      {
+        ModFP16QuantEmuFunctor<Device, T>()(
+          context->eigen_device<Device>(),
+          static_cast<int>(input_tensor.NumElements()),
+          input_tensor.flat<T>().data(),
+          poutput_tensor->flat<T>().data());
+      }
+      break; 
+   }
   }
  private: 
   string data_format_;
@@ -718,6 +836,7 @@ template class QuantEmuOp<CPUDevice, Eigen::half>;
   template struct Log2QuantEmuFunctor<CPUDevice, T>;	         \
   template struct PositQuantEmuFunctor<CPUDevice, T>;            \
   template struct BfloatQuantEmuFunctor<CPUDevice, T>;            \
+  template struct ModFP16QuantEmuFunctor<CPUDevice, T>;            \
   REGISTER_KERNEL_BUILDER(                                       \
       Name("QuantizeEmu").Device(DEVICE_CPU).TypeConstraint<T>("T"), \
       QuantEmuOp<CPUDevice, T>);
@@ -738,6 +857,7 @@ template class QuantEmuOp<GPUDevice, Eigen::half>;
   template struct Log2QuantEmuFunctor<GPUDevice, T>;                 \
   template struct PositQuantEmuFunctor<GPUDevice, T>;                \
   template struct BfloatQuantEmuFunctor<GPUDevice, T>;                \
+  template struct ModFP16QuantEmuFunctor<GPUDevice, T>;                \
   REGISTER_KERNEL_BUILDER(                                           \
       Name("QuantizeEmu").Device(DEVICE_GPU).TypeConstraint<T>("T"), \
       QuantEmuOp<GPUDevice, T>);

@@ -507,13 +507,12 @@ class BatchNormalization(Layer):
       inputs = quantemu_ops.quantize_emu(inputs,
 		data_format=dformat, 
 		allocate_copy=int(0), 
-                data_type=int(os.getenv('QUANTEMU_INPUT_DATA_TYPE', 0)),
+                data_type=int(os.getenv('QUANTEMU_BNORM_DATA_TYPE', 0)),
                 precision=int(os.getenv('QUANTEMU_PRECISION_BNORM_INPUTS', 23)), 
                 exponent_bits=int(os.getenv('QUANTEMU_EXPBITS', 5)),
                 channel_blocking_type=int(os.getenv('QUANTEMU_CBLOCK_TYPE_BNORM_INPUTS', 0)),
                 channels_per_block=int(os.getenv('QUANTEMU_CBLOCK_SIZE_INPUTS', 0)),
-                round_mode=int(os.getenv('QUANTEMU_RMODE_INPUTS', 0)), 
-                quantize_gradients=int(0))
+                round_mode=int(os.getenv('QUANTEMU_RMODE_INPUTS', 0))) 
    
 
     original_training_value = training
