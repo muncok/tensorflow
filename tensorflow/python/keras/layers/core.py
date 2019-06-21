@@ -25,6 +25,7 @@ import warnings
 import os
 import numpy as np
 
+from tensorflow.python.ops import quantemu_ops
 from tensorflow.python.eager import context
 from tensorflow.python.framework import common_shapes
 from tensorflow.python.framework import ops
@@ -957,22 +958,59 @@ class Dense(Layer):
 
   def call(self, inputs):
     inputs = ops.convert_to_tensor(inputs, dtype=self.dtype)
-    rank = common_shapes.rank(inputs)
-    if rank > 2:
-      # Broadcasting is required for the inputs.
-      outputs = standard_ops.tensordot(inputs, self.kernel, [[rank - 1], [0]])
-      # Reshape the output back to the original ndim of the input.
-      if not context.executing_eagerly():
-        shape = inputs.get_shape().as_list()
-        output_shape = shape[:-1] + [self.units]
-        outputs.set_shape(output_shape)
-    else:
-      outputs = gen_math_ops.mat_mul(inputs, self.kernel)
-    if self.use_bias:
-      outputs = nn.bias_add(outputs, self.bias)
-    if self.activation is not None:
-      return self.activation(outputs)  # pylint: disable=not-callable
-    return outputs
+
+    enable_quantop_dense = int(os.getenv('ENABLE_QUANTOP_DENSE', 0))
+    if enable_quantop_dense == 1:
+      inputs_qs = quantemu_ops.quantize_emu(inputs,
+                    data_format='unknown',
+                    allocate_copy=int(os.getenv('QUANTEMU_ALLOCATE_COPY_INPUTS', 0)),
+                    data_type=int(os.getenv('QUANTEMU_DENSE_DATA_TYPE', 0)),
+                    precision=int(os.getenv('QUANTEMU_PRECISION_DENSE_INPUTS', 23)),
+                    exponent_bits=int(os.getenv('QUANTEMU_EXPBITS', 5)),
+                    round_mode=int(os.getenv('QUANTEMU_RMODE_INPUTS', 0)))
+
+      kernel_qs = quantemu_ops.quantize_emu(self.kernel,
+                data_format='unknown',
+                allocate_copy=int(os.getenv('QUANTEMU_ALLOCATE_COPY_FILTERS', 0)),
+                data_type=int(os.getenv('QUANTEMU_DENSE_DATA_TYPE', 0)),
+                precision=int(os.getenv('QUANTEMU_PRECISION_DENSE_FILTERS', 23)),
+                exponent_bits=int(os.getenv('QUANTEMU_EXPBITS', 5)),
+                round_mode=int(os.getenv('QUANTEMU_RMODE_FILTERS', 0)))
+      rank = common_shapes.rank(inputs)
+      if rank > 2:
+        # Broadcasting is required for the inputs.
+        outputs = standard_ops.tensordot(inputs_qs, kernel_qs, [[rank - 1], [0]])
+        # Reshape the output back to the original ndim of the input.
+        if not context.executing_eagerly():
+          shape = inputs.get_shape().as_list()
+          output_shape = shape[:-1] + [self.units]
+          outputs.set_shape(output_shape)
+      else:
+        outputs = gen_math_ops.mat_mul(inputs_qs, kernel_qs)
+      if self.use_bias:
+        outputs = nn.bias_add(outputs, self.bias)
+      if self.activation is not None:
+        return self.activation(outputs)  # pylint: disable=not-callable
+      return outputs
+
+    else : # No quantization
+
+      rank = common_shapes.rank(inputs)
+      if rank > 2:
+        # Broadcasting is required for the inputs.
+        outputs = standard_ops.tensordot(inputs, self.kernel, [[rank - 1], [0]])
+        # Reshape the output back to the original ndim of the input.
+        if not context.executing_eagerly():
+          shape = inputs.get_shape().as_list()
+          output_shape = shape[:-1] + [self.units]
+          outputs.set_shape(output_shape)
+      else:
+        outputs = gen_math_ops.mat_mul(inputs, self.kernel)
+      if self.use_bias:
+        outputs = nn.bias_add(outputs, self.bias)
+      if self.activation is not None:
+        return self.activation(outputs)  # pylint: disable=not-callable
+      return outputs
 
   def compute_output_shape(self, input_shape):
     input_shape = tensor_shape.TensorShape(input_shape)

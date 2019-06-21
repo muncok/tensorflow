@@ -893,7 +893,7 @@ def _BaseFusedBatchNormGrad(op, use_v2, *grad):
                 exponent_bits=int(os.getenv('QUANTEMU_EXPBITS', 5)),
                 channel_blocking_type=int(os.getenv('QUANTEMU_CBLOCK_TYPE_BNORM_GRADS', 0)),
                 channels_per_block=int(os.getenv('QUANTEMU_CBLOCK_SIZE_GRADS', 0)),
-                round_mode=int(os.getenv('QUANTEMU_RMODE_GRADS', 0))) 
+                round_mode=int(os.getenv('QUANTEMU_BNORM_RMODE_GRADS', 0))) 
 
   if enable_quantop_input == 1: 
      x = quantemu_ops.quantize_emu(x,
@@ -903,7 +903,7 @@ def _BaseFusedBatchNormGrad(op, use_v2, *grad):
                 exponent_bits=int(os.getenv('QUANTEMU_EXPBITS', 5)),
                 channel_blocking_type=int(os.getenv('QUANTEMU_CBLOCK_TYPE_BNORM_INPUTS', 0)),
                 channels_per_block=int(os.getenv('QUANTEMU_CBLOCK_SIZE_INPUTS', 0)),
-                round_mode=int(os.getenv('QUANTEMU_RMODE_INPUTS', 0))) 
+                round_mode=int(os.getenv('QUANTEMU_BNORM_RMODE_INPUTS', 0))) 
 
 
   scale = op.inputs[1]

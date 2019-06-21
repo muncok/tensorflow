@@ -512,7 +512,7 @@ class BatchNormalization(Layer):
                 exponent_bits=int(os.getenv('QUANTEMU_EXPBITS', 5)),
                 channel_blocking_type=int(os.getenv('QUANTEMU_CBLOCK_TYPE_BNORM_INPUTS', 0)),
                 channels_per_block=int(os.getenv('QUANTEMU_CBLOCK_SIZE_INPUTS', 0)),
-                round_mode=int(os.getenv('QUANTEMU_RMODE_INPUTS', 0))) 
+                round_mode=int(os.getenv('QUANTEMU_BNORM_RMODE_INPUTS', 0))) 
    
 
     original_training_value = training

@@ -1164,13 +1164,25 @@ def _MatMulGrad(op, grad):
   b = math_ops.conj(op.inputs[1])
 
   enable_quantop_matmul = int(os.getenv('ENABLE_QUANTOP_MATMUL', 0))
-  enable_quantop_matmul_grad = int(os.getenv('ENABLE_QUANTOP_MATMUL_GRAD', 0))
-  if enable_quantop_matmul_grad == 1 and enable_quantop_matmul == 1 : 
+  enable_quantop_dense  = int(os.getenv('ENABLE_QUANTOP_DENSE', 0))
+  enable_quantop_matmul_grad = int(os.getenv('ENABLE_QUANTOP_MATMUL_GRAD', 0)) 
+  enable_quantop_dense_grad = int(os.getenv('ENABLE_QUANTOP_DENSE_GRAD', 0))
+  quant_matmul = (enable_quantop_matmul and enable_quantop_matmul_grad) 
+  quant_dense  = (enable_quantop_dense and enable_quantop_dense_grad) 
+
+  if enable_quantop_dense and enable_quantop_dense_grad :
+     quant_data_type = int(os.getenv('QUANTEMU_DENSE_DATA_TYPE', 0))
+     quant_grad_precision = int(os.getenv('QUANTEMU_PRECISION_DENSE_GRADS', 23))
+  else :  
+     quant_data_type = int(os.getenv('QUANTEMU_GRAD_DATA_TYPE', 0))
+     quant_grad_precision = int(os.getenv('QUANTEMU_PRECISION_MATMUL_GRADS', 23))
+
+  if quant_matmul == 1 or quant_dense == 1 : 
      grad = quantemu_ops.quantize_emu(grad,
 		data_format='unknown', 
                 allocate_copy=int(os.getenv('QUANTEMU_ALLOCATE_COPY_GRADS', 0)),
-                data_type=int(os.getenv('QUANTEMU_GRAD_DATA_TYPE', 0)),
-                precision=int(os.getenv('QUANTEMU_PRECISION_MATMUL_GRADS', 23)),
+                data_type=quant_data_type, #int(os.getenv('QUANTEMU_GRAD_DATA_TYPE', 0)),
+                precision=quant_grad_precision, #int(os.getenv('QUANTEMU_PRECISION_MATMUL_GRADS', 23)),
                 exponent_bits=int(os.getenv('QUANTEMU_EXPBITS', 5)),
                 round_mode=int(os.getenv('QUANTEMU_RMODE_GRADS', 0))) 
 
