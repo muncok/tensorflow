@@ -30,10 +30,10 @@ from tensorflow.python.platform import test
 class DummyGensym(object):
   """A dumb gensym that suffixes a stem by sequential numbers from 1000."""
 
-  def __init__(self, entity_info):
-    del entity_info
+  def __init__(self, ctx):
+    del ctx
     # A proper implementation needs to account for:
-    #   * entity_info.namespace
+    #   * ctx.info.namespace
     #   * all the symbols defined in the AST
     #   * the symbols generated so far
     self._idx = 0
@@ -43,24 +43,44 @@ class DummyGensym(object):
     return stem + '_' + str(1000 + self._idx)
 
 
+# These two test functions have to be top-level, not nested, for compatibility
+# with some unknown version of Python 2.7 preceding 2.7.15.  Why?  Because
+# `exec` and nested function definitions _incomaptibly_ change the
+# representation of local variables, such that `exec` inside a nested function
+# definition is a syntax error in that version.  The tuple form of `exec` fixes
+# this problem, but apparently that was introduced in some unknown version of
+# Python that's more recent than at least one version that we wish to be
+# compatible with.
+def exec_test_function():
+  # The point is to test A-normal form conversion of exec
+  # pylint: disable=exec-used
+  exec('computed' + 5 + 'stuff', globals(), locals())
+
+
+def exec_expected_result():
+  # pylint: disable=exec-used
+  tmp_1001 = 'computed' + 5
+  tmp_1002 = tmp_1001 + 'stuff'
+  tmp_1003 = globals()
+  tmp_1004 = locals()
+  exec(tmp_1002, tmp_1003, tmp_1004)
+
+
 class AnfTransformerTest(test.TestCase):
 
-  def _simple_source_info(self):
-    return transformer.EntityInfo(
-        source_code=None,
-        source_file=None,
-        namespace=None,
-        arg_values=None,
-        arg_types=None,
-        owner_type=None)
+  def _simple_context(self):
+    entity_info = transformer.EntityInfo(
+        source_code=None, source_file=None, future_features=(), namespace=None)
+    return transformer.Context(entity_info)
 
   def test_basic(self):
     def test_function():
       a = 0
       return a
-    node, _ = parser.parse_entity(test_function)
-    node = anf.transform(node.body[0], self._simple_source_info())
-    result, _ = compiler.ast_to_object(node)
+
+    node, _ = parser.parse_entity(test_function, future_features=())
+    node = anf.transform(node, self._simple_context())
+    result, _, _ = compiler.ast_to_object(node)
     self.assertEqual(test_function(), result.test_function())
 
   def assert_same_ast(self, expected_node, node, msg=None):
@@ -74,19 +94,19 @@ class AnfTransformerTest(test.TestCase):
     # Testing the code bodies only.  Wrapping them in functions so the
     # syntax highlights nicely, but Python doesn't try to execute the
     # statements.
-    exp_node, _ = parser.parse_entity(expected_fn)
-    node, _ = parser.parse_entity(test_fn)
+    exp_node, _ = parser.parse_entity(expected_fn, future_features=())
+    node, _ = parser.parse_entity(test_fn, future_features=())
     node = anf.transform(
-        node, self._simple_source_info(), gensym_source=DummyGensym)
-    exp_name = exp_node.body[0].name
+        node, self._simple_context(), gensym_source=DummyGensym)
+    exp_name = exp_node.name
     # Ignoring the function names in the result because they can't be
     # the same (because both functions have to exist in the same scope
     # at the same time).
-    node.body[0].name = exp_name
+    node.name = exp_name
     self.assert_same_ast(exp_node, node)
     # Check that ANF is idempotent
     node_repeated = anf.transform(
-        node, self._simple_source_info(), gensym_source=DummyGensym)
+        node, self._simple_context(), gensym_source=DummyGensym)
     self.assert_same_ast(node_repeated, node)
 
   def test_binop_basic(self):
@@ -357,21 +377,7 @@ class AnfTransformerTest(test.TestCase):
     self.assert_body_anfs_as_expected(expected_result, test_function)
 
   def test_exec(self):
-
-    def test_function():
-      # The point is to test A-normal form conversion of exec
-      # pylint: disable=exec-used
-      exec('computed' + 5 + 'stuff', globals(), locals())
-
-    def expected_result():
-      # pylint: disable=exec-used
-      tmp_1001 = 'computed' + 5
-      tmp_1002 = tmp_1001 + 'stuff'
-      tmp_1003 = globals()
-      tmp_1004 = locals()
-      exec(tmp_1002, tmp_1003, tmp_1004)
-
-    self.assert_body_anfs_as_expected(expected_result, test_function)
+    self.assert_body_anfs_as_expected(exec_expected_result, exec_test_function)
 
   def test_simple_while_and_assert(self):
 

@@ -13,11 +13,11 @@
 # limitations under the License.
 # ==============================================================================
 """Iterator ops."""
+
 from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 from tensorflow.python.data.ops import iterator_ops
-from tensorflow.python.data.ops import optional_ops
 from tensorflow.python.framework import ops
 from tensorflow.python.ops import gen_dataset_ops
 from tensorflow.python.training import basic_session_run_hooks
@@ -44,8 +44,8 @@ def make_saveable_from_iterator(iterator):
     saveable_obj = tf.data.experimental.make_saveable_from_iterator(iterator)
     # Add the SaveableObject to the SAVEABLE_OBJECTS collection so
     # it can be automatically saved using Saver.
-    tf.add_to_collection(tf.GraphKeys.SAVEABLE_OBJECTS, saveable_obj)
-    saver = tf.train.Saver()
+    tf.compat.v1.add_to_collection(tf.GraphKeys.SAVEABLE_OBJECTS, saveable_obj)
+    saver = tf.compat.v1.train.Saver()
 
     while continue_training:
       ... Perform training ...
@@ -198,7 +198,7 @@ class CheckpointInputPipelineHook(session_run_hook.SessionRunHook):
     # is run *after* this hook. That is troublesome because
     # 1. If a checkpoint exists and this hook restores it, the initializer hook
     #    will override it.
-    # 2. If no checkpoint exists, this hook will try to save an initialized
+    # 2. If no checkpoint exists, this hook will try to save an uninitialized
     #    iterator which will result in an exception.
     #
     # As a temporary fix we enter the following implicit contract between this
@@ -262,7 +262,3 @@ class _CustomSaver(saver_lib.Saver):
         sess, save_path, global_step, latest_filename or self._latest_filename,
         meta_graph_suffix, write_meta_graph, write_state, strip_default_attrs)
 
-
-tf_export("data.experimental.Optional")(optional_ops.Optional)
-tf_export("data.experimental.get_next_as_optional")(
-    iterator_ops.get_next_as_optional)

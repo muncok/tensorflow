@@ -250,7 +250,7 @@ def conv(lhs,
     rhs_dilation: dilation to apply between kernel elements
     dimension_numbers: a `ConvolutionDimensionNumbers` proto.
     feature_group_count: number of feature groups for grouped convolution.
-    precision_config: a `PrecisionConfigProto` proto.
+    precision_config: a `xla.PrecisionConfig` proto.
     name: an optional name for the operator
 
   Returns:
@@ -291,8 +291,20 @@ def dot_general(lhs, rhs, dimension_numbers, precision_config=None, name=None):
       name=name)
 
 
+def self_adjoint_eig(a, lower, max_iter, epsilon):
+  return gen_xla_ops.xla_self_adjoint_eig(a, lower, max_iter, epsilon)
+
+
+def svd(a, max_iter, epsilon, precision_config=None):
+  precision_config_proto = ""
+  if precision_config:
+    precision_config_proto = precision_config.SerializeToString()
+  return gen_xla_ops.xla_svd(a, max_iter, epsilon, precision_config_proto)
+
+
 dynamic_slice = gen_xla_ops.xla_dynamic_slice
 dynamic_update_slice = gen_xla_ops.xla_dynamic_update_slice
+einsum = gen_xla_ops.xla_einsum
 
 # TODO(phawkins): generalize tf.pad to support interior padding, and then remove
 # the XLA-specific pad operator.
@@ -320,6 +332,8 @@ def reduce_window(operand,
                   reducer,
                   window_dimensions,
                   window_strides=None,
+                  base_dilations=None,
+                  window_dilations=None,
                   padding=None,
                   name=None):
   """Wraps the XLA ReduceWindow operator.
@@ -343,15 +357,22 @@ def reduce_window(operand,
     A tensor that represents the output of the reduce_window operator.
   """
   window_strides = window_strides or [1] * len(window_dimensions)
+  base_dilations = base_dilations or [1] * len(window_dimensions)
+  window_dilations = window_dilations or [1] * len(window_dimensions)
   padding = padding or [(0, 0)] * len(window_dimensions)
   return gen_xla_ops.xla_reduce_window(
       input=operand,
       init_value=init,
       window_dimensions=window_dimensions,
       window_strides=window_strides,
+      base_dilations=base_dilations,
+      window_dilations=window_dilations,
       padding=padding,
       computation=reducer,
       name=name)
+
+
+replica_id = gen_xla_ops.xla_replica_id
 
 
 def reshape(x, new_sizes, dimensions=None, name=None):
@@ -380,3 +401,4 @@ def slice(x, start_dims, limit_dims, strides):
 sort = gen_xla_ops.xla_sort
 key_value_sort = gen_xla_ops.xla_key_value_sort
 while_loop = gen_xla_ops.xla_while
+dequantize = gen_xla_ops.xla_dequantize

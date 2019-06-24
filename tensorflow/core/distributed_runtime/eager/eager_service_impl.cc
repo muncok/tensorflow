@@ -15,6 +15,7 @@ limitations under the License.
 
 #include "tensorflow/core/distributed_runtime/eager/eager_service_impl.h"
 
+#include "absl/memory/memory.h"
 #include "tensorflow/c/c_api_internal.h"
 #include "tensorflow/c/tf_status_helper.h"
 #include "tensorflow/core/common_runtime/device_mgr.h"
@@ -36,6 +37,7 @@ limitations under the License.
 #include "tensorflow/core/lib/strings/stringprintf.h"
 #include "tensorflow/core/platform/cpu_info.h"
 #include "tensorflow/core/platform/env.h"
+#include "tensorflow/core/platform/host_info.h"
 
 namespace tensorflow {
 namespace eager {
@@ -86,39 +88,47 @@ Status EagerServiceImpl::CreateContext(const CreateContextRequest* request,
     return tensorflow::errors::Internal(
         "invalid eager env_ or env_->rendezvous_mgr.");
   }
-  std::vector<tensorflow::Device*> devices;
-
-  TF_RETURN_IF_ERROR(tensorflow::DeviceFactory::AddDevices(
-      // TODO(nareshmodi): Correctly set the SessionOptions.
-      SessionOptions(),
-      strings::Printf("/job:%s/replica:0/task:%d",
-                      request->server_def().job_name().data(),
-                      request->server_def().task_index()),
-      &devices));
-  response->mutable_device_attributes()->Reserve(devices.size());
-  for (auto& d : devices) {
-    *response->add_device_attributes() = d->attributes();
+  std::vector<DeviceAttributes> cluster_device_attributes;
+  cluster_device_attributes.reserve(
+      request->cluster_device_attributes().size());
+  for (const auto& cluster_device : request->cluster_device_attributes()) {
+    cluster_device_attributes.push_back(cluster_device);
   }
-
-  std::unique_ptr<tensorflow::DeviceMgr> device_mgr(
-      new tensorflow::DeviceMgr(devices));
 
   auto* r = env_->rendezvous_mgr->Find(request->rendezvous_id());
   auto session_name = strings::StrCat("eager_", request->rendezvous_id());
   TF_RETURN_IF_ERROR(env_->session_mgr->CreateSession(
-      session_name, request->server_def(), true));
+      session_name, request->server_def(), request->cluster_device_attributes(),
+      true));
 
   std::shared_ptr<WorkerSession> worker_session;
   TF_RETURN_IF_ERROR(env_->session_mgr->WorkerSessionForSession(
       session_name, &worker_session));
 
+  tensorflow::DeviceMgr* device_mgr = worker_session->device_mgr();
+
   // Initialize remote tensor communication based on worker session.
   TF_RETURN_IF_ERROR(r->Initialize(worker_session.get()));
 
-  std::unique_ptr<tensorflow::EagerContext> ctx(new tensorflow::EagerContext(
+  std::function<Rendezvous*(const int64)> rendezvous_creator =
+      [worker_session, this](const int64 step_id) {
+        auto* r = env_->rendezvous_mgr->Find(step_id);
+        r->Initialize(worker_session.get()).IgnoreError();
+        return r;
+      };
+
+  tensorflow::EagerContext* ctx = new tensorflow::EagerContext(
       SessionOptions(),
       tensorflow::ContextDevicePlacementPolicy::DEVICE_PLACEMENT_SILENT,
-      request->async(), std::move(device_mgr), r));
+      request->async(), device_mgr, false, r, nullptr,
+      worker_session->cluster_flr.get(), std::move(rendezvous_creator));
+
+  std::vector<DeviceAttributes> device_attributes;
+  device_mgr->ListDeviceAttributes(&device_attributes);
+
+  for (const auto& da : device_attributes) {
+    *response->add_device_attributes() = da;
+  }
 
   uint64 context_id;
   {
@@ -126,9 +136,8 @@ Status EagerServiceImpl::CreateContext(const CreateContextRequest* request,
     do {
       context_id = random::New64();
     } while (contexts_.find(context_id) != contexts_.end());
-    contexts_.emplace(
-        context_id,
-        new ServerContext(std::move(ctx), request->keep_alive_secs(), env_));
+    contexts_.emplace(context_id,
+                      new ServerContext(ctx, request->keep_alive_secs(), env_));
   }
   response->set_context_id(context_id);
 
@@ -152,20 +161,19 @@ Status EagerServiceImpl::ExecuteOp(const Operation& operation,
   std::unique_ptr<tensorflow::EagerOperation> op;
   const char* name = operation.name().c_str();  // Shorthand
   const tensorflow::AttrTypeMap* types;
-  auto status = tensorflow::AttrTypeMapForOp(name, &types);
-  if (status.ok()) {
-    op.reset(
-        new tensorflow::EagerOperation(server_context->Context(), name, types));
-  } else if (errors::IsNotFound(status)) {
-    if (server_context->Context()->FindFunctionByName(name)) {
-      op.reset(new tensorflow::EagerOperation(server_context->Context(), name,
-                                              nullptr));
-    } else {
-      return status;
-    }
-  } else {
-    return status;
+  bool is_function = false;
+  TF_RETURN_IF_ERROR(tensorflow::AttrTypeMapForOp(name, &types, &is_function));
+  if (is_function && !server_context->Context()->FindFunctionByName(name)) {
+    return errors::NotFound(
+        "'", name,
+        "' is neither a type of a primitive operation nor a name "
+        "of a function registered in binary running on ",
+        port::Hostname(),
+        ". Make sure the operation or function is "
+        "registered in the binary running in this process.");
   }
+  op.reset(new tensorflow::EagerOperation(server_context->Context(), name,
+                                          is_function, types));
 
   TF_RETURN_IF_ERROR(op->SetDevice(operation.device().c_str()));
 

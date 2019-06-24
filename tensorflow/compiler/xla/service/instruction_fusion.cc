@@ -23,9 +23,13 @@ limitations under the License.
 
 #include "absl/algorithm/container.h"
 #include "absl/container/flat_hash_map.h"
+#include "absl/container/flat_hash_set.h"
 #include "absl/memory/memory.h"
 #include "tensorflow/compiler/xla/map_util.h"
+#include "tensorflow/compiler/xla/service/fusion_queue.h"
+#include "tensorflow/compiler/xla/service/hlo_instruction.h"
 #include "tensorflow/compiler/xla/service/hlo_opcode.h"
+#include "tensorflow/compiler/xla/service/hlo_reachability.h"
 #include "tensorflow/core/lib/core/errors.h"
 #include "tensorflow/core/platform/logging.h"
 
@@ -61,6 +65,7 @@ bool IsAlwaysDuplicable(const HloInstruction& instruction) {
     case HloOpcode::kCeil:
     case HloOpcode::kClamp:
     case HloOpcode::kClz:
+    case HloOpcode::kCompare:
     case HloOpcode::kComplex:
     case HloOpcode::kConcatenate:
     case HloOpcode::kConstant:
@@ -68,29 +73,26 @@ bool IsAlwaysDuplicable(const HloInstruction& instruction) {
     case HloOpcode::kCopy:
     case HloOpcode::kDynamicSlice:
     case HloOpcode::kDynamicUpdateSlice:
-    case HloOpcode::kEq:
     case HloOpcode::kFloor:
-    case HloOpcode::kGe:
     case HloOpcode::kGetTupleElement:
-    case HloOpcode::kGt:
     case HloOpcode::kImag:
     case HloOpcode::kInfeed:
     case HloOpcode::kIota:
     case HloOpcode::kIsFinite:
-    case HloOpcode::kLe:
-    case HloOpcode::kLt:
     case HloOpcode::kMaximum:
     case HloOpcode::kMinimum:
     case HloOpcode::kMultiply:
-    case HloOpcode::kNe:
     case HloOpcode::kNegate:
     case HloOpcode::kNot:
     case HloOpcode::kOr:
     case HloOpcode::kXor:
     case HloOpcode::kOutfeed:
     case HloOpcode::kPad:
+    case HloOpcode::kPartitionId:
+    case HloOpcode::kPopulationCount:
     case HloOpcode::kReal:
     case HloOpcode::kReducePrecision:
+    case HloOpcode::kReplicaId:
     case HloOpcode::kReshape:
     case HloOpcode::kReverse:
     case HloOpcode::kRoundNearestAfz:
@@ -100,7 +102,6 @@ bool IsAlwaysDuplicable(const HloInstruction& instruction) {
     case HloOpcode::kShiftRightLogical:
     case HloOpcode::kSlice:
     case HloOpcode::kSubtract:
-    case HloOpcode::kAfterAll:
     case HloOpcode::kTranspose:
     case HloOpcode::kTuple:
     case HloOpcode::kTupleSelect:
@@ -113,15 +114,19 @@ bool IsAlwaysDuplicable(const HloInstruction& instruction) {
     case HloOpcode::kSin:
       return ShapeUtil::ElementIsComplex(instruction.shape());
 
-    // Expensive instructions.
+    // Expensive instructions or unusual instructions for which fusion is
+    // nonsensical.
+    case HloOpcode::kAddDependency:
+    case HloOpcode::kAfterAll:
     case HloOpcode::kAtan2:
     case HloOpcode::kBatchNormGrad:
     case HloOpcode::kBatchNormInference:
     case HloOpcode::kBatchNormTraining:
     case HloOpcode::kCall:
+    case HloOpcode::kCholesky:
     case HloOpcode::kConditional:
     case HloOpcode::kConvolution:
-    case HloOpcode::kCrossReplicaSum:
+    case HloOpcode::kAllReduce:
     case HloOpcode::kAllToAll:
     case HloOpcode::kCollectivePermute:
     case HloOpcode::kCustomCall:
@@ -144,14 +149,18 @@ bool IsAlwaysDuplicable(const HloInstruction& instruction) {
     case HloOpcode::kReduceWindow:
     case HloOpcode::kRemainder:
     case HloOpcode::kRng:
+    case HloOpcode::kRsqrt:
     case HloOpcode::kScatter:
     case HloOpcode::kSelectAndScatter:
     case HloOpcode::kSend:
     case HloOpcode::kSendDone:
     case HloOpcode::kSort:
+    case HloOpcode::kSqrt:
     case HloOpcode::kTanh:
     case HloOpcode::kTrace:
+    case HloOpcode::kTriangularSolve:
     case HloOpcode::kWhile:
+    case HloOpcode::kGetDimensionSize:
       return true;
   }
 
@@ -167,23 +176,22 @@ bool InstructionFusion::EffectivelyAtMostUnary(HloInstruction* hlo) {
   ShapeUtil::ForEachSubshape(
       hlo->shape(),
       [&output_rank](const Shape& subshape, const ShapeIndex& shape_index) {
-        if (ShapeUtil::IsArray(subshape)) {
+        if (subshape.IsArray()) {
           output_rank = std::max(output_rank, ShapeUtil::TrueRank(subshape));
         }
       });
-  return std::count_if(hlo->operands().begin(), hlo->operands().end(),
-                       [output_rank](HloInstruction* operand) {
-                         if (operand->opcode() == HloOpcode::kBroadcast ||
-                             operand->opcode() == HloOpcode::kIota) {
-                           return false;
-                         }
-                         if (operand->opcode() == HloOpcode::kConstant &&
-                             ShapeUtil::IsEffectiveScalar(operand->shape())) {
-                           return false;
-                         }
-                         return ShapeUtil::TrueRank(operand->shape()) >=
-                                output_rank;
-                       }) <= 1;
+  return absl::c_count_if(
+             hlo->operands(), [output_rank](HloInstruction* operand) {
+               if (operand->opcode() == HloOpcode::kBroadcast ||
+                   operand->opcode() == HloOpcode::kIota) {
+                 return false;
+               }
+               if (operand->opcode() == HloOpcode::kConstant &&
+                   ShapeUtil::IsEffectiveScalar(operand->shape())) {
+                 return false;
+               }
+               return ShapeUtil::TrueRank(operand->shape()) >= output_rank;
+             }) <= 1;
 }
 
 bool InstructionFusion::CanFuseOnAllPaths(
@@ -243,67 +251,63 @@ InstructionFusion::ComputeGloballyUnfusible(
   HloInstructionSet do_not_duplicate;
   absl::flat_hash_map<std::pair<HloInstruction*, HloInstruction*>, bool>
       can_fuse_on_all_paths_result_cache;
-  for (HloInstruction* consumer : post_order) {
-    for (HloInstruction* producer : consumer->operands()) {
-      if (do_not_duplicate.count(producer) > 0) {
-        continue;
-      }
-
-      // If the producer is effectively not more than unary, duplicating it
-      // will not increase the number of relevant inputs read, as the fusion
-      // node will only need to read at most 1 relevant input (the input of
-      // the producer). In that case, we do not forbid fusion of the operation
-      // here.
-      if (EffectivelyAtMostUnary(producer)) {
-        continue;
-      }
-
-      // If the total size of the inputs is less than or equal to the total size
-      // of the outputs for the producer then duplicating it won't increase the
-      // memory traffic. In that case, we do not forbid fusion of the operation
-      // here.
-      auto total_size = [](const Shape& shape) {
-        int64 size = 0;
-        ShapeUtil::ForEachSubshape(
-            shape,
-            [&size](const Shape& subshape, const ShapeIndex& shape_index) {
-              if (ShapeUtil::IsArray(subshape)) {
-                size += ShapeUtil::ElementsIn(subshape);
-              }
-            });
-        return size;
-      };
-      int64 operands_size = 0;
-      for (const HloInstruction* op : producer->operands()) {
-        operands_size += total_size(op->shape());
-      }
-      if (operands_size <= total_size(producer->shape())) {
-        continue;
-      }
-
-      // Otherwise we will forbid fusing the op unless we can fuse it into
-      // all of its consumers on all paths.
-      //
-      // That means, that for:
-      // A --> B (fusible)
-      //   \-> C (non-fusible)
-      // A will be not allowed to be fused into B, as it cannot be fused into C.
-      //
-      // Similarly, for:
-      // A -------------> B
-      //   \-> C -> D -/
-      // If:
-      // - A is fusible into B and C, and D is fusible into B
-      // - C is *not* fusible into D
-      // A will be not allowed to be fused into B, as it cannot be fused via
-      // all paths.
-      if (producer->IsFusible() &&
-          CanFuseOnAllPaths(producer, consumer, do_not_duplicate,
-                            &can_fuse_on_all_paths_result_cache)) {
-        continue;
-      }
-      do_not_duplicate.insert(producer);
+  for (auto it = post_order.rbegin(); it != post_order.rend(); ++it) {
+    HloInstruction* producer = *it;
+    // If the producer is effectively not more than unary, duplicating it
+    // will not increase the number of relevant inputs read, as the fusion
+    // node will only need to read at most 1 relevant input (the input of
+    // the producer). In that case, we do not forbid fusion of the operation
+    // here.
+    if (EffectivelyAtMostUnary(producer)) {
+      continue;
     }
+
+    // If the total size of the inputs is less than or equal to the total size
+    // of the outputs for the producer then duplicating it won't increase the
+    // memory traffic. In that case, we do not forbid fusion of the operation
+    // here.
+    auto total_size = [](const Shape& shape) {
+      int64 size = 0;
+      ShapeUtil::ForEachSubshape(
+          shape, [&size](const Shape& subshape, const ShapeIndex& shape_index) {
+            if (subshape.IsArray()) {
+              size += ShapeUtil::ElementsIn(subshape);
+            }
+          });
+      return size;
+    };
+    int64 operands_size = 0;
+    for (const HloInstruction* op : producer->unique_operands()) {
+      operands_size += total_size(op->shape());
+    }
+    if (operands_size <= total_size(producer->shape())) {
+      continue;
+    }
+
+    // Otherwise we will forbid fusing the op unless we can fuse it into
+    // all of its consumers on all paths.
+    //
+    // That means, that for:
+    // A --> B (fusible)
+    //   \-> C (non-fusible)
+    // A will be not allowed to be fused into B, as it cannot be fused into C.
+    //
+    // Similarly, for:
+    // A -------------> B
+    //   \-> C -> D -/
+    // If:
+    // - A is fusible into B and C, and D is fusible into B
+    // - C is *not* fusible into D
+    // A will be not allowed to be fused into B, as it cannot be fused via
+    // all paths.
+    if (producer->IsFusible() &&
+        absl::c_all_of(producer->users(), [&](HloInstruction* consumer) {
+          return CanFuseOnAllPaths(producer, consumer, do_not_duplicate,
+                                   &can_fuse_on_all_paths_result_cache);
+        })) {
+      continue;
+    }
+    do_not_duplicate.insert(producer);
   }
 
   return do_not_duplicate;
@@ -402,14 +406,11 @@ class ReversePostOrderFusionQueue : public FusionQueue {
       }
       sorted_operand_numbers.push_back(i);
     }
-    std::sort(
-        sorted_operand_numbers.begin(), sorted_operand_numbers.end(),
-        [&](int64 i, int64 j) {
-          // Instructions with higher priority in the queue come first.
-          return (
-              FindOrDie(post_order_index_, instruction->mutable_operand(i)) >
+    absl::c_sort(sorted_operand_numbers, [&](int64 i, int64 j) {
+      // Instructions with higher priority in the queue come first.
+      return (FindOrDie(post_order_index_, instruction->mutable_operand(i)) >
               FindOrDie(post_order_index_, instruction->mutable_operand(j)));
-        });
+    });
     return std::make_pair(instruction, sorted_operand_numbers);
   }
 
@@ -436,28 +437,26 @@ class ReversePostOrderFusionQueue : public FusionQueue {
 }  // namespace
 
 std::unique_ptr<FusionQueue> InstructionFusion::GetFusionQueue(
-    HloComputation* computation,
-    const std::function<bool(HloInstruction*)>& skip_producer) {
+    HloComputation* computation) {
   return absl::make_unique<ReversePostOrderFusionQueue>(computation);
 }
 
 StatusOr<bool> InstructionFusion::Run(HloModule* module) {
-  VLOG(2) << "Before instruction fusion:";
-  XLA_VLOG_LINES(2, module->ToString());
-
   bool changed = false;
   module_ = module;
   for (auto* computation : module->MakeNonfusionComputations()) {
     CHECK(!computation->IsFusionComputation());
     computation_ = computation;
-    reachability_ = computation_->ComputeReachability();
+    reachability_ = HloReachabilityMap::Build(computation_);
 
-    HloInstructionSet do_not_duplicate =
-        ComputeGloballyUnfusible(computation_->MakeInstructionPostOrder());
-    auto fusion_queue =
-        GetFusionQueue(computation_, [&](HloInstruction* producer) {
-          return do_not_duplicate.count(producer) > 0;
-        });
+    HloInstructionSet do_not_duplicate;
+    // If we allow duplications, we need to compute which instructions we do not
+    // want to duplicate based on a global analysis of the graph.
+    if (may_duplicate_) {
+      do_not_duplicate =
+          ComputeGloballyUnfusible(computation_->MakeInstructionPostOrder());
+    }
+    auto fusion_queue = GetFusionQueue(computation_);
 
     // Instruction fusion effectively fuses edges in the computation graph
     // (producer instruction -> consumer instruction) so we iterate over all
@@ -488,9 +487,8 @@ StatusOr<bool> InstructionFusion::Run(HloModule* module) {
         HloInstruction* fusion_instruction;
         // Try "regular" fusion if the operand may be duplicated. Otherwise,
         // perform multi-output fusion, unless this creates a cycle.
-        // TODO(tjoerg): Consider making multi-output fusion the default.
-        if (ShouldFuse(instruction, i) &&
-            do_not_duplicate.count(operand) == 0) {
+        if (do_not_duplicate.count(operand) == 0 &&
+            ShouldFuse(instruction, i)) {
           fusion_queue->PreFusion(operand, instruction);
           fusion_instruction = Fuse(operand, instruction);
         } else if (ShouldFuseIntoMultiOutput(instruction, i) &&
@@ -520,9 +518,6 @@ StatusOr<bool> InstructionFusion::Run(HloModule* module) {
       }
     }
   }
-
-  VLOG(2) << "After instruction fusion:";
-  XLA_VLOG_LINES(2, module->ToString());
 
   return changed;
 }
@@ -564,15 +559,42 @@ HloInstruction* InstructionFusion::FuseIntoMultiOutput(
 
 bool InstructionFusion::MultiOutputFusionCreatesCycle(
     HloInstruction* producer, HloInstruction* consumer) {
-  return absl::c_any_of(
-      consumer->operands(), [&](const HloInstruction* consumer_operand) {
-        // The fusion algorithm traverses the HLO graph in reverse post order.
-        // Thus `cosumers` is visited before its operands (including
-        // `producer`). Therefore, consumer operands cannot have been fused yet.
-        // It is thus safe to use the pre-computed reachability map.
-        return consumer_operand != producer &&
-               reachability_->IsReachable(producer, consumer_operand);
-      });
+  absl::flat_hash_set<int> operands;
+  for (const HloInstruction* operand : consumer->operands()) {
+    if (operand == producer) {
+      continue;
+    }
+
+    // If the reachability map already contains the producer and the operand of
+    // the consumer, and the producer can reach the operand, then we know for
+    // sure MultiOutputFusion would create a cycle. If not, we need to do a DFS
+    // traversal of the computation to verify that this multioutput fusion would
+    // not create a cycle.
+    if (reachability_->IsPresent(producer) &&
+        reachability_->IsPresent(operand) &&
+        reachability_->IsReachable(producer, operand)) {
+      return true;
+    }
+    operands.insert(operand->unique_id());
+  }
+
+  // Do a DFS on the producer to see if any of the other consumer operands are
+  // reachable in the current state of the graph.
+  std::vector<HloInstruction*> worklist = producer->users();
+  absl::flat_hash_set<int> visits;
+  while (!worklist.empty()) {
+    const HloInstruction* user = worklist.back();
+    worklist.pop_back();
+    if (operands.count(user->unique_id()) != 0) {
+      return true;
+    }
+    if (visits.count(user->unique_id()) == 0) {
+      visits.insert(user->unique_id());
+      worklist.insert(worklist.end(), user->users().begin(),
+                      user->users().end());
+    }
+  }
+  return false;
 }
 
 bool InstructionFusion::ShouldFuse(HloInstruction* consumer,
@@ -586,10 +608,8 @@ bool InstructionFusion::ShouldFuse(HloInstruction* consumer,
     return false;
   }
 
-  if (consumer->opcode() == HloOpcode::kFusion &&
-      consumer->fusion_kind() != HloInstruction::FusionKind::kLoop &&
-      consumer->fusion_kind() != HloInstruction::FusionKind::kInput &&
-      consumer->fusion_kind() != HloInstruction::FusionKind::kOutput) {
+  if (consumer->opcode() == HloOpcode::kFusion && !consumer->IsLoopFusion() &&
+      !consumer->IsInputFusion() && !consumer->IsOutputFusion()) {
     return false;
   }
 

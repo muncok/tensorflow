@@ -22,11 +22,10 @@ import shutil
 import tempfile
 from absl.testing import parameterized
 import numpy as np
-import six
-
-from tensorflow.contrib.distribute.python import combinations
 from tensorflow.contrib.optimizer_v2 import adagrad
 from tensorflow.python.data.ops import dataset_ops
+from tensorflow.python.distribute import combinations
+from tensorflow.python.distribute import strategy_combinations
 from tensorflow.python.eager import test
 from tensorflow.python.estimator import run_config
 from tensorflow.python.estimator import training
@@ -34,7 +33,7 @@ from tensorflow.python.estimator.canned import dnn_linear_combined
 from tensorflow.python.estimator.canned import prediction_keys
 from tensorflow.python.estimator.export import export
 from tensorflow.python.estimator.inputs import numpy_io
-from tensorflow.python.feature_column import feature_column
+from tensorflow.python.feature_column import feature_column_lib as feature_column
 from tensorflow.python.framework import ops
 from tensorflow.python.platform import gfile
 from tensorflow.python.summary.writer import writer_cache
@@ -61,9 +60,9 @@ class DNNLinearCombinedClassifierIntegrationTest(test.TestCase,
       combinations.combine(
           mode=['graph'],
           distribution=[
-              combinations.one_device_strategy,
-              combinations.mirrored_strategy_with_gpu_and_cpu,
-              combinations.mirrored_strategy_with_two_gpus
+              strategy_combinations.one_device_strategy,
+              strategy_combinations.mirrored_strategy_with_gpu_and_cpu,
+              strategy_combinations.mirrored_strategy_with_two_gpus,
           ],
           use_train_and_evaluate=[True, False]))
   def test_complete_flow_with_mode(self, distribution, use_train_and_evaluate):
@@ -75,12 +74,12 @@ class DNNLinearCombinedClassifierIntegrationTest(test.TestCase,
     train_input_fn = self.dataset_input_fn(
         x={'x': data},
         y=data,
-        batch_size=batch_size // len(distribution.worker_devices),
+        batch_size=batch_size // distribution.num_replicas_in_sync,
         shuffle=True)
     eval_input_fn = self.dataset_input_fn(
         x={'x': data},
         y=data,
-        batch_size=batch_size // len(distribution.worker_devices),
+        batch_size=batch_size // distribution.num_replicas_in_sync,
         shuffle=False)
     predict_input_fn = numpy_io.numpy_input_fn(
         x={'x': data}, batch_size=batch_size, shuffle=False)
@@ -115,7 +114,7 @@ class DNNLinearCombinedClassifierIntegrationTest(test.TestCase,
       scores = estimator.evaluate(eval_input_fn)
 
     self.assertEqual(num_steps, scores[ops.GraphKeys.GLOBAL_STEP])
-    self.assertIn('loss', six.iterkeys(scores))
+    self.assertIn('loss', scores)
 
     predictions = np.array([
         x[prediction_keys.PredictionKeys.PREDICTIONS]
@@ -126,8 +125,8 @@ class DNNLinearCombinedClassifierIntegrationTest(test.TestCase,
     feature_spec = feature_column.make_parse_example_spec(feature_columns)
     serving_input_receiver_fn = export.build_parsing_serving_input_receiver_fn(
         feature_spec)
-    export_dir = estimator.export_savedmodel(tempfile.mkdtemp(),
-                                             serving_input_receiver_fn)
+    export_dir = estimator.export_saved_model(tempfile.mkdtemp(),
+                                              serving_input_receiver_fn)
     self.assertTrue(gfile.Exists(export_dir))
 
   def tearDown(self):

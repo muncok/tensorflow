@@ -1046,7 +1046,7 @@ struct BlockC_QuantEmuFunctor<GPUDevice, T> {
 
     for (int cb = 0; cb < num_cblocks; cb+=num_streams) {
       for (int d3 = 0; d3 < c_blocks; d3++) {
-#pragma omp parallel for  
+//#pragma omp parallel for  
 	for (int k=0; k < num_streams; k++) {
           int tensor_offset = (cb+k)*dims[3]; 
           const int block_offset = tensor_offset + d3*block_size; 
@@ -1121,7 +1121,7 @@ struct BlockCHW_QuantEmuFunctor<GPUDevice, T> {
 
     for (int d0 = 0; d0 < dims[0]; d0+=num_streams) {
       for (int d1 = 0; d1 < chw_blocks; d1++) {
-#pragma omp parallel for 
+//#pragma omp parallel for 
         for (int k=0; k < num_streams; k++) {
           int tensor_offset  = (d0+k)*dims[1]*dims[2]*dims[3];  
           int block_offset = tensor_offset + d1*block_size; 

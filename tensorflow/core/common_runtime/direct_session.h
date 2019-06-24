@@ -247,8 +247,10 @@ class DirectSession : public Session {
                                    ExecutorsAndKeys* executors_and_keys,
                                    RunMetadata* run_metadata);
 
-  // Returns whether inter-op execution uses a global pool.
-  bool ShouldUseRunHandlerPool() const;
+  // Returns whether inter-op execution uses a global pool or the input
+  // `run_options` requests being run on inter_op_thread_pool = 0 in case
+  // multiple pools are configured.
+  bool ShouldUseRunHandlerPool(const RunOptions& run_options) const;
 
   ::tensorflow::Status ExtendLocked(const GraphDef& graph)
       EXCLUSIVE_LOCKS_REQUIRED(graph_state_lock_);
@@ -315,6 +317,7 @@ class DirectSession : public Session {
   std::vector<Device*> devices_;  // not owned
   DeviceSet device_set_;
 
+  // Unique session identifier.
   string session_handle_;
   mutex graph_state_lock_;
   bool graph_created_ GUARDED_BY(graph_state_lock_) = false;
@@ -327,8 +330,6 @@ class DirectSession : public Session {
 
   // If true, blocks until device has finished all queued operations in a step.
   bool sync_on_finish_ = true;
-  // Schedules 'c' for execution on pool.
-  void SchedClosure(thread::ThreadPool* pool, std::function<void()> c);
 
   std::vector<std::unique_ptr<FunctionInfo>> functions_
       GUARDED_BY(executor_lock_);
@@ -387,7 +388,7 @@ class DirectSession : public Session {
   std::atomic<int64> edge_name_counter_ = {0};
   std::atomic<int64> handle_name_counter_ = {0};
 
-  // For generating step ids that are unique across this sessions.
+  // For generating step ids that are unique among all sessions.
   static std::atomic_int_fast64_t step_id_counter_;
 
   // Global timeout for all blocking operations in this session.
@@ -399,6 +400,18 @@ class DirectSession : public Session {
   // For testing collective graph key generation.
   mutex collective_graph_key_lock_;
   int64 collective_graph_key_ GUARDED_BY(collective_graph_key_lock_) = -1;
+
+  // Run in caller's thread if RunOptions.inter_op_thread_pool is negative or
+  // all of following conditions are met:
+  // 1. This session doesn't own any thread pool.
+  // 2. RunOptions.inter_op_thread_pool is unspecified or 0.
+  // 3. This session has a single executor.
+  // 4. config.inter_op_parallelism_threads is specified to negative explicitly
+  //    or through environment variable TF_NUM_INTEROP_THREADS.
+  // 5. RunOptions.experimental.use_run_handler_pool is unspecified or false.
+  // Otherwise run in global thread pool, session owned thread pool or handler
+  // pool according to other specifications of RunOptions and ConfigProto.
+  bool run_in_caller_thread_ = false;
 
   TF_DISALLOW_COPY_AND_ASSIGN(DirectSession);
 

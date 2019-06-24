@@ -28,6 +28,8 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
+import weakref
+
 import gast
 
 from tensorflow.python.autograph.pyct import anno
@@ -137,12 +139,12 @@ class Analyzer(cfg.GraphVisitor):
         for s in node_scope.modified:
           def_ = self._definition_factory()
           if s in node_scope.params:
-            def_.param_of = node_scope.params[s]
+            def_.param_of = weakref.ref(node_scope.params[s])
           node_symbols[s] = def_
         self.gen_map[node] = _NodeState(node_symbols)
 
       gen = self.gen_map[node]
-      kill = node_scope.modified
+      kill = node_scope.modified | node_scope.deleted
       defs_out = gen | (defs_in - kill)
 
     else:
@@ -151,10 +153,9 @@ class Analyzer(cfg.GraphVisitor):
       # This Name node below is a literal name, e.g. False
       # This can also happen if activity.py forgot to annotate the node with a
       # scope object.
-      assert isinstance(
-          node.ast_node,
-          (gast.Name, gast.Break, gast.Continue, gast.Raise)), (node.ast_node,
-                                                                node)
+      assert isinstance(node.ast_node,
+                        (gast.Name, gast.Break, gast.Continue, gast.Raise,
+                         gast.Pass)), (node.ast_node, node)
       defs_out = defs_in
 
     self.in_[node] = defs_in
@@ -215,10 +216,10 @@ class TreeAnnotator(transformer.Base):
 
     return node
 
-  def visit_nonlocal(self, node):
+  def visit_Nonlocal(self, node):
     raise NotImplementedError()
 
-  def visit_global(self, node):
+  def visit_Global(self, node):
     raise NotImplementedError()
 
   def visit_Name(self, node):
@@ -230,7 +231,8 @@ class TreeAnnotator(transformer.Base):
     analyzer = self.current_analyzer
     cfg_node = self.current_cfg_node
 
-    assert cfg_node is not None, 'name node outside of any statement?'
+    assert cfg_node is not None, ('name node, %s, outside of any statement?'
+                                  % node.id)
 
     qn = anno.getanno(node, anno.Basic.QN)
     if isinstance(node.ctx, gast.Load):
@@ -272,6 +274,16 @@ class TreeAnnotator(transformer.Base):
   def visit_While(self, node):
     self._aggregate_predecessors_defined_in(node)
     return self.generic_visit(node)
+
+  def visit_Try(self, node):
+    self._aggregate_predecessors_defined_in(node)
+    return self.generic_visit(node)
+
+  def visit_ExceptHandler(self, node):
+    self._aggregate_predecessors_defined_in(node)
+    # TODO(mdan): Also track the exception type / name symbols.
+    node.body = self.visit_block(node.body)
+    return node
 
   def visit(self, node):
     parent = self.current_cfg_node

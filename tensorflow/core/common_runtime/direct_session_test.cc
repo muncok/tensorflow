@@ -50,8 +50,8 @@ limitations under the License.
 #include "tensorflow/core/util/device_name_utils.h"
 
 #ifdef GOOGLE_CUDA
-#include "cuda/include/cuda.h"
-#include "cuda/include/cuda_runtime_api.h"
+#include "third_party/gpus/cuda/include/cuda.h"
+#include "third_party/gpus/cuda/include/cuda_runtime_api.h"
 #endif  // GOOGLE_CUDA
 
 namespace tensorflow {
@@ -109,7 +109,7 @@ class DirectSessionMinusAXTest : public ::testing::Test {
     z_ = z->name();
     z->set_assigned_device_name("/job:localhost/replica:0/task:0/cpu:1");
 
-    test::graph::ToGraphDef(&graph, &def_);
+    graph.ToGraphDef(&def_);
   }
 
   string a_;
@@ -540,7 +540,7 @@ TEST_F(DirectSessionMinusAXTest, InvalidDevice) {
   Node* y = test::graph::Matmul(&graph, a, x, false, false);
   y->set_assigned_device_name("/job:localhost/replica:0/task:0/cpu:2");
 
-  test::graph::ToGraphDef(&graph, &def);
+  graph.ToGraphDef(&def);
 
   SessionOptions options;
   (*options.config.mutable_device_count())["CPU"] = 2;
@@ -552,7 +552,7 @@ TEST_F(DirectSessionMinusAXTest, InvalidDevice) {
   // Fix placement and run again
   def.Clear();
   y->set_assigned_device_name("/job:localhost/replica:0/task:0/cpu:1");
-  test::graph::ToGraphDef(&graph, &def);
+  graph.ToGraphDef(&def);
   session.reset(NewSession(options));
   TF_ASSERT_OK(session->Create(def));
   std::vector<Tensor> outputs;
@@ -671,7 +671,7 @@ TEST(DirectSessionTest, KeepsStateAcrossRunsOfSession) {
   Node* init = test::graph::Assign(&g, var, twenty_node);
   init->set_assigned_device_name("/job:localhost/replica:0/task:0/cpu:0");
 
-  test::graph::ToGraphDef(&g, &def);
+  g.ToGraphDef(&def);
 
   auto session = CreateSession();
   ASSERT_TRUE(session != nullptr);
@@ -706,7 +706,7 @@ TEST(DirectSessionTest, MultipleFeedTest) {
   Node* second_const = test::graph::Constant(&g, second_value);
   Node* second_identity = test::graph::Identity(&g, second_const);
 
-  test::graph::ToGraphDef(&g, &def);
+  g.ToGraphDef(&def);
 
   auto session = CreateSession();
   ASSERT_TRUE(session != nullptr);
@@ -779,7 +779,7 @@ TEST(DirectSessionTest, MultipleFeedTest_Callable) {
   Node* second_const = test::graph::Constant(&g, second_value);
   Node* second_identity = test::graph::Identity(&g, second_const);
 
-  test::graph::ToGraphDef(&g, &def);
+  g.ToGraphDef(&def);
 
   auto session = CreateSession();
   ASSERT_TRUE(session != nullptr);
@@ -865,7 +865,7 @@ TEST(DirectSessionTest, TestTensorConnectionUseTwice) {
   Node* y = test::graph::Add(&graph, left, right);
 
   GraphDef def;
-  test::graph::ToGraphDef(&graph, &def);
+  graph.ToGraphDef(&def);
 
   auto session = CreateSession();
   ASSERT_TRUE(session != nullptr);
@@ -904,7 +904,7 @@ TEST(DirectSessionTest, FetchMultipleTimes) {
   Node* seven_node = test::graph::Constant(&g, seven_tensor);
 
   GraphDef def;
-  test::graph::ToGraphDef(&g, &def);
+  g.ToGraphDef(&def);
 
   auto session = CreateSession();
   ASSERT_TRUE(session != nullptr);
@@ -941,7 +941,7 @@ TEST(DirectSessionTest, MultipleFeedTestSomeSyncRun) {
   Node* second_const = test::graph::Constant(&g, second_value);
   Node* second_identity = test::graph::Identity(&g, second_const);
 
-  test::graph::ToGraphDef(&g, &def);
+  g.ToGraphDef(&def);
 
   auto session = CreateSession();
   ASSERT_TRUE(session != nullptr);
@@ -1031,12 +1031,33 @@ TEST(DirectSessionTest, SessionSyncRun) {
   Node* x = test::graph::Constant(&g, vx);
   Node* y = test::graph::Unary(&g, "ThreadID", x);
   GraphDef def;
-  test::graph::ToGraphDef(&g, &def);
+  g.ToGraphDef(&def);
   auto sess = CreateSession();
   TF_ASSERT_OK(sess->Create(def));
   std::vector<Tensor> outputs;
   RunOptions run_opts;
   run_opts.set_inter_op_thread_pool(-1);
+  auto s = sess->Run(run_opts, {}, {y->name() + ":0"}, {}, &outputs, nullptr);
+
+  std::hash<std::thread::id> hasher;
+  EXPECT_EQ(static_cast<int64>(hasher(std::this_thread::get_id())),
+            static_cast<int64>(outputs[0].scalar<int64>()()));
+}
+
+TEST(DirectSessionTest, SyncSession) {
+  Graph g(OpRegistry::Global());
+  Tensor vx(DT_INT64, TensorShape({}));
+  vx.scalar<int64>()() = 17;
+  Node* x = test::graph::Constant(&g, vx);
+  Node* y = test::graph::Unary(&g, "ThreadID", x);
+  GraphDef def;
+  g.ToGraphDef(&def);
+  SessionOptions options;
+  options.config.set_inter_op_parallelism_threads(-1);
+  std::unique_ptr<Session> sess(NewSession(options));
+  TF_ASSERT_OK(sess->Create(def));
+  std::vector<Tensor> outputs;
+  RunOptions run_opts;
   auto s = sess->Run(run_opts, {}, {y->name() + ":0"}, {}, &outputs, nullptr);
 
   std::hash<std::thread::id> hasher;
@@ -1066,7 +1087,7 @@ TEST(DirectSessionTest, DarthKernel) {
   Node* x = test::graph::Constant(&g, vx);
   Node* y = test::graph::Unary(&g, "Darth", x);
   GraphDef def;
-  test::graph::ToGraphDef(&g, &def);
+  g.ToGraphDef(&def);
   auto sess = CreateSession();
   TF_ASSERT_OK(sess->Create(def));
   std::vector<Tensor> outputs;
@@ -1084,7 +1105,7 @@ TEST(DirectSessionTest, PlacePrunedGraph) {
     Node* y = test::graph::Unary(&g, "Darth", x);
     y->set_assigned_device_name("/job:localhost/replica:0/task:0/device:GPU:0");
     GraphDef def;
-    test::graph::ToGraphDef(&g, &def);
+    g.ToGraphDef(&def);
 
     // By default, we place the entire graph, so we should fail the
     // call to Create.
@@ -1102,7 +1123,7 @@ TEST(DirectSessionTest, PlacePrunedGraph) {
     Node* y = test::graph::Unary(&g, "Darth", x);
     y->set_assigned_device_name("/job:localhost/replica:0/task:0/device:GPU:0");
     GraphDef def;
-    test::graph::ToGraphDef(&g, &def);
+    g.ToGraphDef(&def);
 
     SessionOptions options;
     // Set the option to place pruned graphs, we should expect this
@@ -1133,7 +1154,7 @@ TEST(DirectSessionTest, PartialRunTest) {
   Node* third = test::graph::Add(&g, first_identity, second_identity);
   Node* third_identity = test::graph::Identity(&g, third);
 
-  test::graph::ToGraphDef(&g, &def);
+  g.ToGraphDef(&def);
 
   auto session = CreateSession();
   ASSERT_TRUE(session != nullptr);
@@ -1189,7 +1210,7 @@ TEST(DirectSessionTest, PartialRunMissingFeed) {
   Node* third = test::graph::Add(&g, first_identity, second_identity);
   Node* third_identity = test::graph::Identity(&g, third);
 
-  test::graph::ToGraphDef(&g, &def);
+  g.ToGraphDef(&def);
 
   auto session = CreateSession();
   ASSERT_TRUE(session != nullptr);
@@ -1222,7 +1243,7 @@ TEST(DirectSessionTest, PartialRunMultiOutputFeed) {
   Node* switch_node = test::graph::Switch(&g, bool_const, bool_const);
   Node* fourth_identity = test::graph::Identity(&g, switch_node, 1);
 
-  test::graph::ToGraphDef(&g, &def);
+  g.ToGraphDef(&def);
 
   auto session = CreateSession();
   ASSERT_TRUE(session != nullptr);
@@ -1271,7 +1292,7 @@ TEST(DirectSessionTest, RunHandleTest) {
 
   Node* node7 = test::graph::Unary(&g, "DeleteSessionTensor", const2);
 
-  test::graph::ToGraphDef(&g, &def);
+  g.ToGraphDef(&def);
 
   auto session = CreateSession();
   ASSERT_TRUE(session != nullptr);
@@ -1324,7 +1345,7 @@ TEST(DirectSessionTest, RunHandleTest_Callable) {
 
   Node* node7 = test::graph::Unary(&g, "DeleteSessionTensor", const2);
 
-  test::graph::ToGraphDef(&g, &def);
+  g.ToGraphDef(&def);
 
   auto session = CreateSession();
   ASSERT_TRUE(session != nullptr);
@@ -1526,7 +1547,7 @@ static void TestSessionInterOpThreadsImpl(bool use_function_lib,
     y = test::graph::Unary(&g, "BlockingOp", x);
   }
   GraphDef def;
-  test::graph::ToGraphDef(&g, &def);
+  g.ToGraphDef(&def);
   *def.mutable_library() = library_graph_def;
 
   // Create session with two inter-op thread pools.
@@ -1677,7 +1698,7 @@ TEST(DirectSessionTest, TestSessionInterOpThreadsInvalidOptions) {
   t.scalar<float>()() = {1.2f};
   Node* x = test::graph::Constant(&g, t);
   GraphDef def;
-  test::graph::ToGraphDef(&g, &def);
+  g.ToGraphDef(&def);
 
   SessionOptions options;
   options.config.mutable_graph_options()
@@ -1736,7 +1757,7 @@ TEST(DirectSessionTest, TestDirectSessionRunClose) {
   Node* var = test::graph::Var(&g, DT_FLOAT, {});
   Node* var_assign = test::graph::Assign(&g, var, var_val);
   GraphDef def;
-  test::graph::ToGraphDef(&g, &def);
+  g.ToGraphDef(&def);
 
   SessionOptions options;
   (*options.config.mutable_device_count())["CPU"] = 2;
@@ -1790,7 +1811,7 @@ TEST(DirectSessionTest, TestDirectSessionPRunClose) {
   Node* third = test::graph::Add(&g, first_identity, second_identity);
   Node* third_identity = test::graph::Identity(&g, third);
 
-  test::graph::ToGraphDef(&g, &def);
+  g.ToGraphDef(&def);
 
   auto session = CreateSession();
   ASSERT_TRUE(session != nullptr);
@@ -1829,7 +1850,7 @@ TEST(DirectSessionTest, TestDirectSessionReset) {
   Node* var = test::graph::Var(&g, DT_FLOAT, {});
   Node* var_assign = test::graph::Assign(&g, var, var_val);
   GraphDef def;
-  test::graph::ToGraphDef(&g, &def);
+  g.ToGraphDef(&def);
 
   SessionOptions options;
   (*options.config.mutable_device_count())["CPU"] = 2;
@@ -2262,8 +2283,8 @@ class DirectSessionCollectiveTest : public ::testing::Test {
     TF_RETURN_IF_ERROR(session->Create(g));
     std::vector<Tensor> outputs;
     TF_RETURN_IF_ERROR(
-        session->Run({{"input1:0", t1}, {"input2:0", t2}}, {},
-                     {"collective_call1:0", "collective_call2:0"}, &outputs));
+        session->Run({{"input0:0", t1}, {"input1:0", t2}}, {},
+                     {"collective_call0:0", "collective_call1:0"}, &outputs));
     DirectSession* direct_session = static_cast<DirectSession*>(session.get());
     {
       mutex_lock l(direct_session->collective_graph_key_lock_);
@@ -2301,6 +2322,26 @@ class DirectSessionCollectiveTest : public ::testing::Test {
         }});
   }
 
+  NodeDef Input(int id) {
+    AttrValue dtype_attr;
+    SetAttrValue(DT_FLOAT, &dtype_attr);
+    NodeDef input;
+    input.set_name(strings::StrCat("input", id));
+    input.set_op("Placeholder");
+    input.mutable_attr()->insert({"dtype", dtype_attr});
+    return input;
+  }
+
+  NodeDef CollectiveCall(const string& op, const string& input, int cpu_id) {
+    NodeDef collective_call;
+    collective_call.set_name(strings::StrCat("collective_call", cpu_id));
+    collective_call.set_op(op);
+    collective_call.add_input(input);
+    collective_call.set_device(
+        strings::StrCat("/job:localhost/replica:0/task:0/device:CPU:", cpu_id));
+    return collective_call;
+  }
+
   // Creates a GraphDef that adds two CollectiveFunctions, one each on CPU0 and
   // CPU1, with instance_key 1, and appropriate placeholder inputs.  If
   // `add_unused_function` is true, adds another CollectiveFunction with
@@ -2317,42 +2358,17 @@ class DirectSessionCollectiveTest : public ::testing::Test {
       *lib->add_function() = unused_function;
     }
 
-    // Inputs.
-    AttrValue dtype_attr;
-    SetAttrValue(DT_FLOAT, &dtype_attr);
-    NodeDef input1;
-    input1.set_name("input1");
-    input1.set_op("Placeholder");
-    input1.mutable_attr()->insert({"dtype", dtype_attr});
-    NodeDef input2;
-    input2.set_name("input2");
-    input2.set_op("Placeholder");
-    input2.mutable_attr()->insert({"dtype", dtype_attr});
-
+    *g.add_node() = Input(0);
+    *g.add_node() = Input(1);
     // CollectiveReduce on CPU0 with instance_key 1.
-    NodeDef collective_call1;
-    collective_call1.set_name("collective_call1");
-    collective_call1.set_op("CollectiveFunction1");
-    collective_call1.add_input("input1");
-    collective_call1.set_device("/job:localhost/replica:0/task:0/device:CPU:0");
+    *g.add_node() = CollectiveCall("CollectiveFunction1", "input0", 0);
     // CollectiveReduce on CPU1 with instance_key 1.
-    NodeDef collective_call2;
-    collective_call2.set_name("collective_call2");
-    collective_call2.set_op("CollectiveFunction1");
-    collective_call2.add_input("input2");
-    collective_call1.set_device("/job:localhost/replica:0/task:0/device:CPU:1");
-
-    *g.add_node() = input1;
-    *g.add_node() = input2;
-    *g.add_node() = collective_call1;
-    *g.add_node() = collective_call2;
+    *g.add_node() = CollectiveCall("CollectiveFunction1", "input1", 1);
 
     return g;
   }
 };
 
-#ifndef GOOGLE_CUDA
-// TODO(ayushd): enable this test for GPU builds.
 TEST_F(DirectSessionCollectiveTest,
        TestCollectiveGraphKeyUsesOnlyCalledFunctions) {
   int64 key1;
@@ -2361,6 +2377,5 @@ TEST_F(DirectSessionCollectiveTest,
   TF_ASSERT_OK(RunGraphWithCollectiveFunctions(true, &key2));
   ASSERT_EQ(key1, key2);
 }
-#endif
 
 }  // namespace tensorflow

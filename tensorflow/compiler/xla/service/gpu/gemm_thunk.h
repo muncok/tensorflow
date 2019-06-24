@@ -41,8 +41,9 @@ class GemmThunk : public Thunk {
             const BufferAllocation::Slice& rhs_buffer,
             const BufferAllocation::Slice& output_buffer,
             const Shape& lhs_shape, const Shape& rhs_shape,
-            const Shape& output_shape, double alpha,
-            const HloInstruction* hlo_instruction);
+            const Shape& output_shape, double alpha, double beta,
+            const HloInstruction* hlo_instruction,
+            bool implements_whole_instruction);
 
   GemmThunk(const GemmThunk&) = delete;
   GemmThunk& operator=(const GemmThunk&) = delete;
@@ -51,14 +52,6 @@ class GemmThunk : public Thunk {
   Status ExecuteOnStream(const BufferAllocations& buffer_allocations,
                          se::Stream* stream,
                          HloExecutionProfiler* profiler) override;
-
-  bool WillAutotuneKernel(se::Stream* stream) override {
-    // We will autotune this kernel if we don't already have a autotune result
-    // for the stream device.
-    return autotune_results_.find(
-               stream->parent()->GetDeviceDescription().name()) ==
-           autotune_results_.end();
-  }
 
  private:
   const BufferAllocation::Slice lhs_buffer_;
@@ -70,15 +63,9 @@ class GemmThunk : public Thunk {
   const Shape output_shape_;
 
   const double alpha_;
+  const double beta_;
 
-  // Maps device names (StreamExecutor::DeviceDescription::name()) to autotune
-  // results.  The map's value is the best algorithm we've found for this thunk
-  // on this device, or an error if none of the algorithms worked and we should
-  // use the regular gemm without an algorithm.
-  //
-  // TODO(b/112415150):  Make this thread safe.
-  std::unordered_map<string, StatusOr<se::blas::AlgorithmType>>
-      autotune_results_;
+  const bool implements_whole_instruction_;
 };
 
 }  // namespace gpu

@@ -18,6 +18,7 @@ from __future__ import division
 from __future__ import print_function
 
 from tensorflow.python.data.experimental.kernel_tests.serialization import dataset_serialization_test_base
+from tensorflow.python.data.experimental.ops import stats_aggregator
 from tensorflow.python.data.experimental.ops import stats_ops
 from tensorflow.python.data.ops import dataset_ops
 from tensorflow.python.framework import errors
@@ -26,9 +27,9 @@ from tensorflow.python.ops import array_ops
 from tensorflow.python.platform import test
 
 
-# TODO(shivaniagrawal): Can not checkpoint input_pipeline with the
+# TODO(b/116814321): Can not checkpoint input_pipeline with the
 # transformation `stats_ops.set_stats_aggregator`, since we don't support
-# serializing StatsAggregator yet.
+# saving/restoring resources (StatsAggregator in this case) yet.
 class StatsDatasetSerializationTest(
     dataset_serialization_test_base.DatasetSerializationTestBase):
 
@@ -92,9 +93,9 @@ class StatsDatasetSerializationTest(
         None, num_outputs)
 
   def _build_dataset_stats_aggregator(self):
-    stats_aggregator = stats_ops.StatsAggregator()
+    aggregator = stats_aggregator.StatsAggregator()
     return dataset_ops.Dataset.range(10).apply(
-        stats_ops.set_stats_aggregator(stats_aggregator))
+        stats_ops.set_stats_aggregator(aggregator))
 
   def test_set_stats_aggregator_not_support_checkpointing(self):
     with self.assertRaisesRegexp(errors.UnimplementedError,

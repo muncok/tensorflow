@@ -32,6 +32,7 @@ limitations under the License.
 #include "tensorflow/core/framework/variant_tensor_data.h"
 #include "tensorflow/core/framework/versions.h"
 #include "tensorflow/core/framework/versions.pb.h"
+#include "tensorflow/core/lib/bfloat16/bfloat16.h"
 #include "tensorflow/core/lib/core/coding.h"
 #include "tensorflow/core/lib/core/errors.h"
 #include "tensorflow/core/lib/gtl/map_util.h"
@@ -785,7 +786,7 @@ Status BundleReader::GetBundleEntryProto(StringPiece key,
   TF_RETURN_IF_ERROR(
       ParseEntryProto(iter_->key(), iter_->value(), &entry_copy));
   if (!TensorShape::IsValid(entry_copy.shape())) {
-    return errors::DataLoss("Invaid tensor shape: ", key, " ",
+    return errors::DataLoss("Invalid tensor shape: ", key, " ",
                             ProtoShortDebugString(entry_copy.shape()));
   }
 
@@ -895,7 +896,7 @@ Status BundleReader::ReadCurrent(Tensor* val) {
   BundleEntryProto entry;
   TF_RETURN_IF_ERROR(ParseEntryProto(iter_->key(), iter_->value(), &entry));
   if (!TensorShape::IsValid(entry.shape())) {
-    return errors::DataLoss("Invaid tensor shape: ", iter_->key(), " ",
+    return errors::DataLoss("Invalid tensor shape: ", iter_->key(), " ",
                             ProtoShortDebugString(entry.shape()));
   }
 
@@ -1033,6 +1034,7 @@ Status BundleReader::GetSliceValue(StringPiece full_tensor_key,
       HANDLE_COPY(qint32)
       HANDLE_COPY(quint8)
       HANDLE_COPY(qint8)
+      HANDLE_COPY(bfloat16)
       default:
         return errors::InvalidArgument("Dtype ", DataTypeString(common_dtype),
                                        " not supported.");

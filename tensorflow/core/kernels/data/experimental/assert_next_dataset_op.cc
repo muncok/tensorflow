@@ -61,8 +61,8 @@ class AssertNextDatasetOp : public UnaryDatasetOpKernel {
 
     std::unique_ptr<IteratorBase> MakeIteratorInternal(
         const string& prefix) const override {
-      return std::unique_ptr<IteratorBase>(
-          new Iterator({this, strings::StrCat(prefix, "::Assert")}));
+      return absl::make_unique<Iterator>(
+          Iterator::Params{this, strings::StrCat(prefix, "::AssertNext")});
     }
 
     const DataTypeVector& output_dtypes() const override {
@@ -75,6 +75,8 @@ class AssertNextDatasetOp : public UnaryDatasetOpKernel {
     string DebugString() const override {
       return "AssertNextDatasetOp::Dataset";
     }
+
+    int64 Cardinality() const override { return input_->Cardinality(); }
 
    protected:
     Status AsGraphDefInternal(SerializationContext* ctx,
@@ -97,7 +99,7 @@ class AssertNextDatasetOp : public UnaryDatasetOpKernel {
 
       Status Initialize(IteratorContext* ctx) override {
         std::vector<string> tokens =
-            str_util::Split(prefix(), ':', str_util::SkipEmpty());
+            absl::StrSplit(prefix(), ':', absl::SkipEmpty());
         if (dataset()->transformations_.size() > tokens.size() - 2) {
           return errors::InvalidArgument(
               "Asserted next ", dataset()->transformations_.size(),
@@ -122,6 +124,12 @@ class AssertNextDatasetOp : public UnaryDatasetOpKernel {
       }
 
      protected:
+      std::shared_ptr<model::Node> CreateNode(
+          IteratorContext* ctx, model::Node::Args args) const override {
+        return model::MakeKnownRatioNode(std::move(args),
+                                         /*ratio=*/1);
+      }
+
       Status SaveInternal(IteratorStateWriter* writer) override {
         TF_RETURN_IF_ERROR(SaveInput(writer, input_impl_));
         return Status::OK();

@@ -36,6 +36,7 @@ from tensorflow.python.platform import tf_logging as logging
 from tensorflow.python.training import training_util
 from tensorflow.python.training.checkpoint_state_pb2 import CheckpointState
 from tensorflow.python.util import compat
+from tensorflow.python.util import deprecation
 from tensorflow.python.util.tf_export import tf_export
 
 
@@ -55,7 +56,7 @@ def _GetCheckpointFilename(save_dir, latest_filename):
   return os.path.join(save_dir, latest_filename)
 
 
-@tf_export("train.generate_checkpoint_state_proto")
+@tf_export(v1=["train.generate_checkpoint_state_proto"])
 def generate_checkpoint_state_proto(save_dir,
                                     model_checkpoint_path,
                                     all_model_checkpoint_paths=None,
@@ -121,7 +122,11 @@ def generate_checkpoint_state_proto(save_dir,
   return coord_checkpoint_proto
 
 
-@tf_export("train.update_checkpoint_state")
+@deprecation.deprecated(
+    date=None,
+    instructions=("Use `tf.train.CheckpointManager` to manage checkpoints "
+                  "rather than manually editing the Checkpoint proto."))
+@tf_export(v1=["train.update_checkpoint_state"])
 def update_checkpoint_state(save_dir,
                             model_checkpoint_path,
                             all_model_checkpoint_paths=None,
@@ -344,7 +349,10 @@ def latest_checkpoint(checkpoint_dir, latest_filename=None):
   return None
 
 
-@tf_export("train.checkpoint_exists")
+@deprecation.deprecated(
+    date=None,
+    instructions="Use standard file APIs to check for files with this prefix.")
+@tf_export(v1=["train.checkpoint_exists"])
 def checkpoint_exists(checkpoint_prefix):
   """Checks whether a V1 or V2 checkpoint exists with the specified prefix.
 
@@ -369,7 +377,10 @@ def checkpoint_exists(checkpoint_prefix):
     return False
 
 
-@tf_export("train.get_checkpoint_mtimes")
+@deprecation.deprecated(
+    date=None,
+    instructions="Use standard file utilities to get mtimes.")
+@tf_export(v1=["train.get_checkpoint_mtimes"])
 def get_checkpoint_mtimes(checkpoint_prefixes):
   """Returns the mtimes (modification timestamps) of the checkpoints.
 
@@ -379,6 +390,10 @@ def get_checkpoint_mtimes(checkpoint_prefixes):
 
   This is the recommended way to get the mtimes, since it takes into account
   the naming difference between V1 and V2 formats.
+
+  Note: If not all checkpoints exist, the length of the returned mtimes list
+  will be smaller than the length of `checkpoint_prefixes` list, so mapping
+  checkpoints to corresponding mtimes will not be possible.
 
   Args:
     checkpoint_prefixes: a list of checkpoint paths, typically the results of
@@ -408,7 +423,10 @@ def get_checkpoint_mtimes(checkpoint_prefixes):
   return mtimes
 
 
-@tf_export("train.remove_checkpoint")
+@deprecation.deprecated(
+    date=None,
+    instructions="Use standard file APIs to delete files with this prefix.")
+@tf_export(v1=["train.remove_checkpoint"])
 def remove_checkpoint(checkpoint_prefix,
                       checkpoint_format_version=saver_pb2.SaverDef.V2,
                       meta_graph_suffix="meta"):
@@ -458,10 +476,12 @@ def meta_graph_filename(checkpoint_filename, meta_graph_suffix="meta"):
 
 
 # TODO(allenl): Allow tf.keras.Model instances in the constructor directly?
+@tf_export("train.CheckpointManager")
 class CheckpointManager(object):
   """Deletes old checkpoints.
 
   Example usage:
+
   ```python
   import tensorflow as tf
   checkpoint = tf.train.Checkpoint(optimizer=optimizer, model=model)
@@ -478,8 +498,12 @@ class CheckpointManager(object):
   particular directory at a time.
   """
 
-  def __init__(self, checkpoint, directory,
-               max_to_keep, keep_checkpoint_every_n_hours=None):
+  def __init__(self,
+               checkpoint,
+               directory,
+               max_to_keep,
+               keep_checkpoint_every_n_hours=None,
+               checkpoint_name="ckpt"):
     """Configure a `CheckpointManager` for use in `directory`.
 
     If a `CheckpointManager` was previously used in `directory`, its
@@ -518,6 +542,7 @@ class CheckpointManager(object):
         checkpoint will be preserved if it has been at least
         `keep_checkpoint_every_n_hours` since the last preserved checkpoint. The
         default setting of `None` does not preserve any checkpoints in this way.
+      checkpoint_name: Custom name for the checkpoint file.
 
     Raises:
       ValueError: If `max_to_keep` is not a positive integer.
@@ -532,7 +557,7 @@ class CheckpointManager(object):
     self._max_to_keep = max_to_keep
     self._keep_checkpoint_every_n_hours = keep_checkpoint_every_n_hours
     self._directory = directory
-    self._checkpoint_prefix = os.path.join(directory, "ckpt")
+    self._checkpoint_prefix = os.path.join(directory, checkpoint_name)
     recovered_state = get_checkpoint_state(directory)
     current_clock = time.time()
     self._maybe_delete = collections.OrderedDict()
@@ -606,7 +631,8 @@ class CheckpointManager(object):
                >= self._last_preserved_timestamp)):
         self._last_preserved_timestamp = timestamp
         continue
-      remove_checkpoint(filename)
+      _delete_file_if_exists(filename + ".index")
+      _delete_file_if_exists(filename + ".data-?????-of-?????")
 
   def _record_state(self):
     """Saves the `CheckpointManager`'s state in `directory`."""
@@ -634,13 +660,10 @@ class CheckpointManager(object):
     """
     return self._checkpoint_prefix
 
-  def save(self, session=None, checkpoint_number=None):
+  def save(self, checkpoint_number=None):
     """Creates a new checkpoint and manages it.
 
     Args:
-      session: The session to evaluate variables in. Ignored when executing
-        eagerly. If not provided when graph building, the default session is
-        used.
       checkpoint_number: An optional integer, or an integer-dtype `Variable` or
         `Tensor`, used to number the checkpoint. If `None` (default),
         checkpoints are numbered using `checkpoint.save_counter`. Even if
@@ -650,16 +673,16 @@ class CheckpointManager(object):
 
     Returns:
       The path to the new checkpoint. It is also recorded in the `checkpoints`
-      and `latest_checkpoint` properies.
+      and `latest_checkpoint` properties.
     """
     # Save counter logic duplicated from tf.train.Checkpoint, soon to diverge
     # slightly with a custom numbering option.
     if context.executing_eagerly():
       save_counter = self._checkpoint.save_counter
       save_counter.assign_add(1)
+      session = None
     else:
-      if session is None:
-        session = ops.get_default_session()
+      session = ops.get_default_session()
 
       def _initializing_creator(next_creator, **kwargs):
         """Initialize the save counter if it has been newly created."""

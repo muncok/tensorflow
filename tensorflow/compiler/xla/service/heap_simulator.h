@@ -85,6 +85,9 @@ class HeapSimulator {
     // If 'buffers_to_assign' is provided, only those buffers are assigned
     // offsets, otherwise all buffers defined by the instructions are assigned.
     const BufferValueFlatSet* buffers_to_assign;
+    // A vector of multiple buffer value sets. Each set enforces a must-alias
+    // relationship for all buffers inside them.
+    std::vector<BufferValueFlatSet> must_alias_sets;
   };
 
   // Returns the minimum memory required to compute an HLO module where all
@@ -153,12 +156,17 @@ class HeapSimulator {
   void Free(const BufferValue* buffer, const HloInstruction* instruction);
   void ShareBuffer(const BufferValue* buffer, const BufferValue* shared,
                    const HloInstruction* instruction);
+
+  // Returns true if:
+  //  Two buffers belong to the same shared group.
+  //  Eight of the buffer has no shared group assigned.
+  bool InSameSharedGroup(const BufferValue* left, const BufferValue* right);
   Result Finish();
 
   void FillDebugTrace(HeapSimulatorTrace::Event::Kind kind,
                       const BufferValue* buffer,
                       const HloInstruction* instruction,
-                      const BufferValue* shared_with_canonical);
+                      const BufferValue* share_with_canonical);
 
   // Counterintuitive: the algorithm_ itself can be a NoFragmentationStatsHeap,
   // in which case we are calculating the same allocs/frees twice in the
@@ -218,12 +226,6 @@ class HeapAlgorithm {
   // Alloc allocates a buffer of 'size' bytes.
   virtual void Alloc(const BufferValue* buffer, int64 size) = 0;
 
-  // NoFragmentationStatsHeap overrides this method.
-  virtual void Alloc(const BufferValue* buffer, int64 size,
-                     const HloInstruction* instruction) {
-    Alloc(buffer, size);
-  }
-
   // Takes memory usage of subcomputations into account when calculating the
   // memory usage of a computation. Currently, we don't handle buffer aliasing
   // between computations entirely correctly. We are careful to not double count
@@ -235,6 +237,8 @@ class HeapAlgorithm {
   // analysis, it's not worth making major changes to HeapSimulator now.
   virtual void AccountForSubcomputationMemory(
       const HloInstruction* instruction,
+      // The total number of bytes allocated by instruction.
+      int64 alloc_size_by_instruction,
       const absl::flat_hash_map<const HloComputation*, int64>&
           memory_by_computation) {}
 
@@ -257,11 +261,8 @@ class NoFragmentationStatsHeap : public HeapAlgorithm {
 
   void Alloc(const BufferValue* buffer, int64 size) override;
 
-  void Alloc(const BufferValue* buffer, int64 size,
-             const HloInstruction* instruction) override;
-
   void AccountForSubcomputationMemory(
-      const HloInstruction* instruction,
+      const HloInstruction* instruction, int64 alloc_size_by_instruction,
       const absl::flat_hash_map<const HloComputation*, int64>&
           memory_by_computation) override;
 
