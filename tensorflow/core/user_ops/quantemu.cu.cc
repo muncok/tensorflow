@@ -632,83 +632,6 @@ void QuantEmuCudaKernel_Unsigned(
 }
 
 
-template <long long kBwInt> 
-__global__ void QuantEmuFxpCudaKernel(
-	int mbits, 
-	int exp_bits, 
-	int rmode, 
-	const int size, 
-	const float *in, 
-	float *out) 
-  // float to fxp32
-  {
-  // ==============================
-    // preliminaries
-    // ==============================
-    const long long kBwFrac(24 - kBwInt);
-    const float min_fxp24_val(-(1 << (kBwInt - 1)));
-    
-    // 32'b011111~
-    const uint32_t max_fxp24_val_bp(
-      0UL << 31 | 
-      ((kBwInt - 2) + 127L) << 23 |
-      ((1UL << 22) - 1) << (23 - 22));
-
-    // std::cout << std::bitset<32>(max_fxp24_val_bp) << std::endl;
-    const float max_fxp24_val = *reinterpret_cast<const float*>(&max_fxp24_val_bp);
-
-    for (int gid = (blockIdx.x * blockDim.x) + threadIdx.x; gid < size; gid += blockDim.x * gridDim.x) {
-      float fp32_val = in[gid];
-
-      // ------------------------------
-      // saturation cases
-      // ------------------------------
-
-      if (fp32_val <= min_fxp24_val) {
-        out[gid] = min_fxp24_val;
-        continue;
-      }
-      else if (fp32_val >= max_fxp24_val) {
-        out[gid] = max_fxp24_val;
-        continue;
-      }
-
-      // ------------------------------
-      // zero cases
-      // ------------------------------
-
-      const uint32_t fp32_val_bp = *reinterpret_cast<const uint32_t*>(&fp32_val);
-      const int fp32_exp =
-        static_cast<int>((fp32_val_bp >> 23) & ((1 << 8) - 1)) - 127;
-
-      // if exponent exceeds capacity of kBWFrac, dst becomes zero.
-      if (fp32_exp < -kBwFrac) {
-        out[gid] = 0;
-        continue;
-      }
-
-      // ------------------------------
-      // other cases
-      // ------------------------------
-
-      const int num_bits_truncated(23 - (kBwFrac + fp32_exp));
-      assert(num_bits_truncated > -1 && num_bits_truncated < 24);
-      const uint32_t fp32_frac = fp32_val_bp & ((1UL << 23) - 1);
-      const uint32_t fp32_frac_new =
-        num_bits_truncated < 0 ?
-          fp32_frac :
-          fp32_frac & ~((1UL << num_bits_truncated) - 1);
-
-      const uint32_t fp32_sign = fp32_val_bp >> (8 + 23);
-
-      const uint32_t res_bp =
-        fp32_sign << (8 + 23) |
-        (fp32_exp + 127L) << 23 |
-        fp32_frac_new << 0;
-
-      out[gid] = *reinterpret_cast<const float*>(&res_bp);
-  }
-  }
 
 __global__ 
 void QuantEmuLowpCudaKernel(
@@ -850,6 +773,117 @@ void QuantEmuLowpCudaKernel(
 }
 
 
+
+
+template <long long kBwInt> 
+__global__ void QuantEmuFxpCudaKernel(
+	int mbits, 
+	int exp_bits, 
+	int rmode, 
+	const int size, 
+	const float *in, 
+	float *out) 
+  // float to fxp24
+  {
+  // ==============================
+    // preliminaries
+    // ==============================
+    const long long kBwFrac(24 - kBwInt);
+    const float min_fxp24_val(-(1 << (kBwInt - 1)));
+    
+    // 32'b011111~
+    const uint32_t max_fxp24_val_bp(
+      0UL << 31 | 
+      ((kBwInt - 2) + 127L) << 23 |
+      ((1UL << 22) - 1) << (23 - 22));
+
+    // std::cout << std::bitset<32>(max_fxp24_val_bp) << std::endl;
+    const float max_fxp24_val = *reinterpret_cast<const float*>(&max_fxp24_val_bp);
+
+    for (int gid = (blockIdx.x * blockDim.x) + threadIdx.x; gid < size; gid += blockDim.x * gridDim.x) {
+      float fp32_val = in[gid];
+
+      // ------------------------------
+      // saturation cases
+      // ------------------------------
+
+      if (fp32_val <= min_fxp24_val) {
+        out[gid] = min_fxp24_val;
+        continue;
+      }
+      else if (fp32_val >= max_fxp24_val) {
+        out[gid] = max_fxp24_val;
+        continue;
+      }
+
+      // ------------------------------
+      // zero cases
+      // ------------------------------
+
+      const uint32_t fp32_val_bp = *reinterpret_cast<const uint32_t*>(&fp32_val);
+      const int fp32_exp =
+        static_cast<int>((fp32_val_bp >> 23) & ((1 << 8) - 1)) - 127;
+
+      // if exponent exceeds capacity of kBwFrac, dst becomes zero.
+      if (fp32_exp < -kBwFrac) {
+        out[gid] = 0;
+        continue;
+      }
+
+      // ------------------------------
+      // other cases
+      // ------------------------------
+
+      const int num_bits_truncated(23 - (kBwFrac + fp32_exp));
+      assert(num_bits_truncated > -1 && num_bits_truncated < 24);
+      const uint32_t fp32_frac = fp32_val_bp & ((1UL << 23) - 1);
+      const uint32_t fp32_frac_new =
+        num_bits_truncated < 0 ?
+          fp32_frac :
+          fp32_frac & ~((1UL << num_bits_truncated) - 1);
+
+      const uint32_t fp32_sign = fp32_val_bp >> (8 + 23);
+
+      const uint32_t res_bp =
+        fp32_sign << (8 + 23) |
+        (fp32_exp + 127L) << 23 |
+        fp32_frac_new << 0;
+
+      out[gid] = *reinterpret_cast<const float*>(&res_bp);
+  }
+  }
+
+template <long long kBwInt> 
+__global__ void QuantEmuFxpCudaKernel(
+	int mbits, 
+	int exp_bits, 
+	int rmode, 
+	const int size, 
+	const Eigen::half* in, 
+	Eigen::half* out) 
+  // float to fxp24
+  {
+      long long a = kBwInt;
+  }
+
+
+template <typename T>
+struct FXPQuantEmuFunctor <GPUDevice, T> {
+  void operator()(const GPUDevice& d, int mbits, int exp_bits, int rmode, int size, const T* in, T* out) {
+    //std::cout << " Inside the LowpFloatQuantEmuFunctor GPU version "<< size  << std::endl; 
+    int block = CUBLOCK_SIZE; 
+    int grid = ( size + (CUBLOCK_SIZE-1))/CUBLOCK_SIZE; 
+    QuantEmuFxpCudaKernel<4> <<<grid, block, 0, d.stream()>>>(mbits, exp_bits, rmode, size, in, out); 
+    //cudaStreamSynchronize(d.stream());
+    //cudaDeviceSynchronize();
+  }
+};
+template struct FXPQuantEmuFunctor<GPUDevice, float>;
+template struct FXPQuantEmuFunctor<GPUDevice, Eigen::half>;
+
+
+
+
 __global__ 
 void QuantEmuLOG2CudaKernel(
 	const int size, 
@@ -873,6 +907,7 @@ void QuantEmuLOG2CudaKernel(
       out[gid] = uf.f;
   }
 }
+
 
 __global__ 
 void QuantEmuLOG2CudaKernel(

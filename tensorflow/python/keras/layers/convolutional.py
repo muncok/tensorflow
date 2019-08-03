@@ -20,7 +20,7 @@ from __future__ import division
 from __future__ import print_function
 
 import os
-import tensorflow as tf 
+import tensorflow as tf
 from tensorflow.python.ops import quantemu_ops
 
 from tensorflow.python.eager import context
@@ -179,7 +179,7 @@ class Conv(Layer):
     else:
       self.bias = None
 
-#    # Naveen PACT Code 
+#    # Naveen PACT Code
 #    if self.activation is not None:
 #      self.pact_threshold = self.add_weight(
 #          name='pact_threshold',
@@ -210,43 +210,43 @@ class Conv(Layer):
 
   def call(self, inputs):
 
-    if self.data_format == 'channels_first' : 
-      inp_channels = inputs.get_shape()[1].value 
-    else : 
+    if self.data_format == 'channels_first' :
+      inp_channels = inputs.get_shape()[1].value
+    else :
       inp_channels = inputs.get_shape()[3].value
 
     enable_quantop_conv = int(os.getenv('ENABLE_QUANTOP_CONV', 0))
 
     #print('quantop status' , enable_quantop, int(os.getenv('QUANTEMU_METHOD', 0)), int(os.getenv('QUANTEMU_EXPBITS', 5)))
-    if enable_quantop_conv == 1 : 
+    if enable_quantop_conv == 1 :
       quant_input_precision = int(os.getenv('QUANTEMU_PRECISION_CONV_INPUTS', 23))
-      quant_filter_precision = int(os.getenv('QUANTEMU_PRECISION_CONV_FILTERS', 23)) 
+      quant_filter_precision = int(os.getenv('QUANTEMU_PRECISION_CONV_FILTERS', 23))
 
       if inp_channels == 3 :
         quant_input_precision = int(os.getenv('QUANTEMU_FIRST_LAYER_PRECISION', 23))
-        quant_filter_precision = int(os.getenv('QUANTEMU_FIRST_LAYER_PRECISION', 23)) 
+        quant_filter_precision = int(os.getenv('QUANTEMU_FIRST_LAYER_PRECISION', 23))
 
       inputs_qs = quantemu_ops.quantize_emu(inputs,
-		data_format=self.data_format, 
-		allocate_copy=int(os.getenv('QUANTEMU_ALLOCATE_COPY_INPUTS', 0)), 
+		data_format=self.data_format,
+		allocate_copy=int(os.getenv('QUANTEMU_ALLOCATE_COPY_INPUTS', 0)),
                 data_type=int(os.getenv('QUANTEMU_INPUT_DATA_TYPE', 0)),
-                precision=quant_input_precision, 
+                precision=quant_input_precision,
                 exponent_bits=int(os.getenv('QUANTEMU_EXPBITS', 5)),
                 channel_blocking_type=int(os.getenv('QUANTEMU_CBLOCK_TYPE_CONV_INPUTS', 0)),
                 channels_per_block=int(os.getenv('QUANTEMU_CBLOCK_SIZE_INPUTS', 0)),
-                round_mode=int(os.getenv('QUANTEMU_RMODE_INPUTS', 0))) 
+                round_mode=int(os.getenv('QUANTEMU_RMODE_INPUTS', 0)))
 
       #tf.add_to_collection (name='QUANTIZED_CONV_ACTIVATIONS', value=tf.identity(inputs_qs, 'quant_activations'))
 
       kernel_qs = quantemu_ops.quantize_emu(self.kernel,
-		data_format=self.data_format, 
-		allocate_copy=int(os.getenv('QUANTEMU_ALLOCATE_COPY_FILTERS', 0)), 
+		data_format=self.data_format,
+		allocate_copy=int(os.getenv('QUANTEMU_ALLOCATE_COPY_FILTERS', 0)),
                 data_type=int(os.getenv('QUANTEMU_FILTER_DATA_TYPE', 0)),
-                precision=quant_filter_precision, 
+                precision=quant_filter_precision,
                 exponent_bits=int(os.getenv('QUANTEMU_EXPBITS', 5)),
                 channel_blocking_type=int(os.getenv('QUANTEMU_CBLOCK_TYPE_CONV_FILTERS', 0)),
                 channels_per_block=int(os.getenv('QUANTEMU_CBLOCK_SIZE_FILTERS', 0)),
-                round_mode=int(os.getenv('QUANTEMU_RMODE_FILTERS', 0))) 
+                round_mode=int(os.getenv('QUANTEMU_RMODE_FILTERS', 0)))
 
       #tf.add_to_collection (name='QUANTIZED_CONV_WEIGHTS', value=tf.identity(kernel_qs, 'quant_weights'))
       outputs = self._convolution_op(inputs_qs, kernel_qs)
@@ -269,7 +269,7 @@ class Conv(Layer):
 
     if self.activation is not None:
       return self.activation(outputs)
-      # Naveen, with PACT threshold clipping 
+      # Naveen, with PACT threshold clipping
       #return self.activation(outputs, max_value=self.pact_threshold)
     return outputs
 

@@ -640,6 +640,44 @@ struct ModFP16QuantEmuFunctor<CPUDevice, T> {
 };
 
 
+
+void QuantEmuFXPCPUKernel(
+	int mbits, 
+	int exp_bits, 
+	int rmode, 
+	const int size, 
+	const float *in, 
+	float *out) 
+{
+    //#pragma omp parallel for 
+    //for (int i=0; i < size; i++) 
+    //{
+    //}
+}
+
+void QuantEmuFXPCPUKernel(
+	int mbits, 
+	int exp_bits, 
+	int rmode, 
+	const int size, 
+	const Eigen::half *in, 
+	Eigen::half *out) 
+{
+
+    //#pragma omp parallel for 
+    //for (int i=0; i < size; i++) 
+    //{
+    //}
+}
+
+template <typename T>
+struct FXPQuantEmuFunctor<CPUDevice, T> {
+  void operator()(const CPUDevice& d, int mbits, int exp_bits, int rmode, int size, const T* in, T* out) {
+    QuantEmuFXPCPUKernel( mbits, exp_bits, rmode, size, in, out);
+  }
+};
+
+
 /* OpKernel definition.
  template parameter <T> is the datatype of the tensors.*/
 template <typename Device, typename T>
@@ -812,6 +850,18 @@ class QuantEmuOp : public OpKernel {
           poutput_tensor->flat<T>().data());
       }
       break; 
+      case FXP: 
+      {
+        FXPQuantEmuFunctor<Device, T>()(
+          context->eigen_device<Device>(),
+          mbits, 	
+          exponent_bits_,
+          round_mode_,
+          static_cast<int>(input_tensor.NumElements()),
+          input_tensor.flat<T>().data(),
+          poutput_tensor->flat<T>().data());
+      }
+      break; 
    }
   }
  private: 
@@ -828,21 +878,23 @@ class QuantEmuOp : public OpKernel {
 template class QuantEmuOp<CPUDevice, float>; 
 template class QuantEmuOp<CPUDevice, Eigen::half>; 
 /* Register the CPU kernels. */
-#define REGISTER_CPU(T)                                          \
-  template struct QuantEmuFunctor<CPUDevice, T>;		 \
-  template struct BlockC_QuantEmuFunctor<CPUDevice, T>;		 \
-  template struct BlockCHW_QuantEmuFunctor<CPUDevice, T>;	 \
-  template struct LowpFloatQuantEmuFunctor<CPUDevice, T>;	 \
-  template struct Log2QuantEmuFunctor<CPUDevice, T>;	         \
-  template struct PositQuantEmuFunctor<CPUDevice, T>;            \
-  template struct BfloatQuantEmuFunctor<CPUDevice, T>;            \
-  template struct ModFP16QuantEmuFunctor<CPUDevice, T>;            \
-  REGISTER_KERNEL_BUILDER(                                       \
+#define REGISTER_CPU(T)                                              \
+  template struct QuantEmuFunctor<CPUDevice, T>;		             \
+  template struct BlockC_QuantEmuFunctor<CPUDevice, T>;		         \
+  template struct BlockCHW_QuantEmuFunctor<CPUDevice, T>;	         \
+  template struct LowpFloatQuantEmuFunctor<CPUDevice, T>;	         \
+  template struct Log2QuantEmuFunctor<CPUDevice, T>;	             \
+  template struct PositQuantEmuFunctor<CPUDevice, T>;                \
+  template struct BfloatQuantEmuFunctor<CPUDevice, T>;               \
+  template struct ModFP16QuantEmuFunctor<CPUDevice, T>;              \
+  template struct FXPQuantEmuFunctor<CPUDevice, T>;                  \
+  REGISTER_KERNEL_BUILDER(                                           \
       Name("QuantizeEmu").Device(DEVICE_CPU).TypeConstraint<T>("T"), \
       QuantEmuOp<CPUDevice, T>);
 
 REGISTER_CPU(float);
 REGISTER_CPU(Eigen::half);
+
 #ifdef GOOGLE_CUDA
 
 template class QuantEmuOp<GPUDevice, float>; 
@@ -856,8 +908,9 @@ template class QuantEmuOp<GPUDevice, Eigen::half>;
   template struct LowpFloatQuantEmuFunctor<GPUDevice, T>;            \
   template struct Log2QuantEmuFunctor<GPUDevice, T>;                 \
   template struct PositQuantEmuFunctor<GPUDevice, T>;                \
-  template struct BfloatQuantEmuFunctor<GPUDevice, T>;                \
-  template struct ModFP16QuantEmuFunctor<GPUDevice, T>;                \
+  template struct BfloatQuantEmuFunctor<GPUDevice, T>;               \
+  template struct ModFP16QuantEmuFunctor<GPUDevice, T>;              \
+  template struct FXPQuantEmuFunctor<GPUDevice, T>;                  \
   REGISTER_KERNEL_BUILDER(                                           \
       Name("QuantizeEmu").Device(DEVICE_GPU).TypeConstraint<T>("T"), \
       QuantEmuOp<GPUDevice, T>);
