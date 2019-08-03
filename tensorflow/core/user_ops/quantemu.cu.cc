@@ -621,7 +621,7 @@ void QuantEmuCudaKernel_Unsigned(
       inval = fminf (inval, *max); 
       inval = fmaxf (inval, *min);
       /* write back saturated value */ 
-      // in[gid] = inval; /* no need for write back */
+      // ilong long [gid] = inval; /* no need for write back */
       /* shift to positive domain */ 
       inval -= *min;
       /* round to the nearest even */ 
@@ -632,9 +632,8 @@ void QuantEmuCudaKernel_Unsigned(
 }
 
 
-template <Long Long kBWInt>
-__global__
-void QuantEmuFxpCudaKernel(
+template <long long kBwInt> 
+__global__ void QuantEmuFxpCudaKernel(
 	int mbits, 
 	int exp_bits, 
 	int rmode, 
@@ -657,8 +656,9 @@ void QuantEmuFxpCudaKernel(
 
     // std::cout << std::bitset<32>(max_fxp24_val_bp) << std::endl;
     const float max_fxp24_val = *reinterpret_cast<const float*>(&max_fxp24_val_bp);
-    for (gid; gid < size; gid += blockDim.x*gridDim.x) {
-      float inval = in[gid];
+
+    for (int gid = (blockIdx.x * blockDim.x) + threadIdx.x; gid < size; gid += blockDim.x * gridDim.x) {
+      float fp32_val = in[gid];
 
       // ------------------------------
       // saturation cases
@@ -666,11 +666,11 @@ void QuantEmuFxpCudaKernel(
 
       if (fp32_val <= min_fxp24_val) {
         out[gid] = min_fxp24_val;
-        continue
+        continue;
       }
       else if (fp32_val >= max_fxp24_val) {
         out[gid] = max_fxp24_val;
-        continue
+        continue;
       }
 
       // ------------------------------
@@ -684,7 +684,7 @@ void QuantEmuFxpCudaKernel(
       // if exponent exceeds capacity of kBWFrac, dst becomes zero.
       if (fp32_exp < -kBwFrac) {
         out[gid] = 0;
-        continue
+        continue;
       }
 
       // ------------------------------
@@ -707,6 +707,7 @@ void QuantEmuFxpCudaKernel(
         fp32_frac_new << 0;
 
       out[gid] = *reinterpret_cast<const float*>(&res_bp);
+  }
   }
 
 __global__ 
